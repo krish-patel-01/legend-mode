@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Legend Mode</title>
+<style>
+  :root {
+    --bg: #0d0f14;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --bubble-user: #26314a;
+    --bubble-assistant: #1c2029;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #8b93a3;
+    --accent: #6ea8fe;
+    --accent-2: #b78cf2;
+    --good: #4caf7d;
+    --warn: #e0a54c;
+    --bad: #e05c5c;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 400px at 15% -10%, rgba(110,168,254,0.10), transparent),
+      radial-gradient(1000px 380px at 90% 0%, rgba(183,140,242,0.09), transparent),
+      var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  header {
+    padding: 22px 28px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 {
+    margin: 0 0 3px;
+    font-size: 19px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  header h1 .wordmark {
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  header p { margin: 0; color: var(--muted); font-size: 13px; }
+  main {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 24px 28px 60px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 20px;
+  }
+
+  /* --- chat --- */
+  #chatLog {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-height: 480px;
+    overflow-y: auto;
+    padding: 4px 2px 8px;
+  }
+  #chatLog:empty::before {
+    content: "👋 Ask me anything. A ~350M model reads it first and hands off to whichever specialist fits — you'll see exactly which one, and why.";
+    color: var(--muted);
+    font-style: italic;
+    display: block;
+    padding: 10px 2px;
+  }
+  .msg { display: flex; flex-direction: column; max-width: 82%; }
+  .msg.user { align-self: flex-end; align-items: flex-end; }
+  .msg.assistant { align-self: flex-start; align-items: flex-start; }
+  .bubble {
+    padding: 10px 14px;
+    border-radius: 14px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .msg.user .bubble { background: var(--bubble-user); border-bottom-right-radius: 4px; }
+  .msg.assistant .bubble { background: var(--bubble-assistant); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .bubble.pending { color: var(--muted); font-style: italic; }
+  .bubble.error { border-color: var(--bad); color: var(--bad); }
+  .tag {
+    margin-top: 5px;
+    font-size: 11.5px;
+    color: var(--muted);
+    font-family: var(--mono);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: default;
+  }
+  .tag .model-chip {
+    font-weight: 700;
+    color: var(--text);
+    background: var(--panel-2);
+    border-radius: 5px;
+    padding: 1px 7px;
+  }
+  .tag .stage-tiny {
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 10px;
+  }
+  .stage-rules, .stage-override { border-color: var(--good) !important; color: var(--good) !important; }
+  .stage-embed { border-color: var(--accent) !important; color: var(--accent) !important; }
+  .stage-classifier { border-color: var(--warn) !important; color: var(--warn) !important; }
+  .stage-cache { border-color: var(--muted) !important; color: var(--muted) !important; }
+  .stage-fallback { border-color: var(--bad) !important; color: var(--bad) !important; }
+
+  /* --- composer --- */
+  .composer textarea {
+    width: 100%;
+    min-height: 60px;
+    resize: vertical;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: inherit;
+  }
+  .composer-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  select, button {
+    font: inherit;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 7px 12px;
+  }
+  button { cursor: pointer; border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  button:hover { background: rgba(110, 168, 254, 0.12); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.secondary { border-color: var(--border); color: var(--muted); font-weight: 500; }
+  .spacer { flex: 1; }
+  .hint { color: var(--muted); font-size: 12px; }
+
+  /* --- last-decision detail panel --- */
+  .decision { display: none; }
+  .decision.show { display: block; }
+  .badge-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .model-badge {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 15px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    background: var(--panel-2);
+  }
+  .stage-pill {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .elapsed { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  .reason { margin: 4px 0 12px; }
+  .reason b { color: var(--text); }
+  .scores { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .score-row { display: grid; grid-template-columns: 90px 1fr 46px; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; }
+  .score-bar-track { background: var(--panel-2); border-radius: 4px; height: 8px; overflow: hidden; }
+  .score-bar-fill { height: 100%; background: var(--accent); }
+  .score-row.top .score-bar-fill { background: var(--good); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  td.prompt { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.model { font-family: var(--mono); }
+  tr.err td { color: var(--bad); }
+  .section-title { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .section-title h2 { margin: 0; font-size: 14px; }
+  .empty { color: var(--muted); padding: 10px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🐉 <span class="wordmark">Legend Mode</span></h1>
+  <p>A tiny router model reads every message and hands it to whichever specialist actually fits.</p>
+</header>
+
+<main>
+  <div class="card">
+    <div id="chatLog"></div>
+
+    <div class="composer">
+      <textarea id="prompt" placeholder="Say hi, ask it to prove something, or ask for the weather right now — watch who answers."></textarea>
+      <div class="composer-row">
+        <select id="policy">
+          <option value="auto">auto (let the router decide)</option>
+        </select>
+        <button id="previewBtn" class="secondary" type="button">Preview route only</button>
+        <button id="sendBtn" type="button">Send</button>
+        <button id="clearBtn" class="secondary" type="button">Clear conversation</button>
+        <span class="spacer"></span>
+        <span class="hint" id="status"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card decision" id="decisionCard">
+    <div class="section-title"><h2>Last routing decision</h2></div>
+    <div class="badge-row">
+      <span class="model-badge" id="dModel"></span>
+      <span class="stage-pill" id="dStage"></span>
+      <span class="elapsed" id="dElapsed"></span>
+    </div>
+    <div class="reason">route: <b id="dRoute"></b> — <span id="dReason"></span></div>
+    <div class="scores" id="dScores"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">
+      <h2>Recent requests</h2>
+      <span class="hint">— from every client hitting this server, newest first</span>
+    </div>
+    <div id="historyWrap"><div class="empty">No requests yet.</div></div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const promptEl = $('prompt'), policyEl = $('policy'), statusEl = $('status');
+const decisionCard = $('decisionCard'), chatLog = $('chatLog');
+
+const ROUTE_EMOJI = {
+  trivial: '⚡', chat: '💬', think: '🧠', tools: '🛠️', vision: '👁️',
+  forced: '🎯',
+};
+function emojiFor(route) { return ROUTE_EMOJI[route] || '🤖'; }
+
+let conversation = []; // {role, content} — full turn history sent on every request
+
+async function loadModels() {
+  try {
+    const res = await fetch('/v1/models');
+    const data = await res.json();
+    for (const m of data.data) {
+      if (m.id.endsWith('-230m') || m.id === 'embed') continue; // internal, not a chat policy
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.id;
+      policyEl.appendChild(opt);
+    }
+  } catch (e) { /* server not up yet */ }
+}
+
+function stageClass(stage) { return 'stage-' + stage; }
+
+function renderDecision(meta, scores) {
+  $('dModel').textContent = meta.model;
+  $('dStage').textContent = meta.stage;
+  $('dStage').className = 'stage-pill ' + stageClass(meta.stage);
+  $('dElapsed').textContent = meta.elapsed_ms.toFixed(1) + ' ms';
+  $('dRoute').textContent = meta.route;
+  $('dReason').textContent = meta.reason;
+
+  const scoresEl = $('dScores');
+  scoresEl.innerHTML = '';
+  const entries = Object.entries(scores || {}).sort((a, b) => b[1] - a[1]);
+  if (entries.length) {
+    const top = entries[0][0];
+    for (const [name, score] of entries) {
+      const row = document.createElement('div');
+      row.className = 'score-row' + (name === top ? ' top' : '');
+      const pct = Math.max(0, Math.min(100, (score + 1) / 2 * 100));
+      row.innerHTML = `<span>${name}</span>
+        <span class="score-bar-track"><span class="score-bar-fill" style="width:${pct}%"></span></span>
+        <span>${score.toFixed(2)}</span>`;
+      scoresEl.appendChild(row);
+    }
+  }
+  decisionCard.classList.add('show');
+}
+
+function addBubble(role, text, opts = {}) {
+  const msg = document.createElement('div');
+  msg.className = 'msg ' + role;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble' + (opts.pending ? ' pending' : '') + (opts.error ? ' error' : '');
+  bubble.textContent = text;
+  msg.appendChild(bubble);
+  if (opts.meta) {
+    const tag = document.createElement('div');
+    tag.className = 'tag';
+    tag.title = opts.meta.reason;
+    tag.innerHTML = `<span>${emojiFor(opts.meta.route)}</span>
+      <span class="model-chip">${opts.meta.model}</span>
+      <span class="stage-tiny ${stageClass(opts.meta.stage)}">${opts.meta.stage}</span>
+      <span>${opts.meta.elapsed_ms.toFixed(0)} ms</span>`;
+    msg.appendChild(tag);
+  }
+  chatLog.appendChild(msg);
+  chatLog.scrollTop = chatLog.scrollHeight;
+  return bubble;
+}
+
+async function previewRoute() {
+  const text = promptEl.value.trim();
+  if (!text) return;
+  statusEl.textContent = 'routing…';
+  try {
+    const res = await fetch('/route/debug?prompt=' + encodeURIComponent(text));
+    const meta = await res.json();
+    renderDecision(meta, meta.scores);
+    statusEl.textContent = 'preview only — nothing was generated, conversation unchanged';
+  } catch (e) {
+    statusEl.textContent = 'error: ' + e;
+  }
+}
+
+async function sendPrompt() {
+  const text = promptEl.value.trim();
+  if (!text) return;
+  promptEl.value = '';
+  $('sendBtn').disabled = true;
+  statusEl.textContent = 'thinking…';
+
+  addBubble('user', text);
+  conversation.push({ role: 'user', content: text });
+  const pending = addBubble('assistant', '…', { pending: true });
+
+  try {
+    const res = await fetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: policyEl.value, messages: conversation }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      pending.textContent = data.detail || JSON.stringify(data);
+      pending.classList.add('error');
+      pending.classList.remove('pending');
+      statusEl.textContent = 'request failed';
+      return;
+    }
+    const meta = data.x_legend_route;
+    renderDecision(meta, meta.scores);
+    const content = data.choices?.[0]?.message?.content || '(empty response)';
+    conversation.push({ role: 'assistant', content });
+
+    pending.textContent = content;
+    pending.classList.remove('pending');
+    const tag = document.createElement('div');
+    tag.className = 'tag';
+    tag.title = meta.reason;
+    tag.innerHTML = `<span>${emojiFor(meta.route)}</span>
+      <span class="model-chip">${meta.model}</span>
+      <span class="stage-tiny ${stageClass(meta.stage)}">${meta.stage}</span>
+      <span>${meta.elapsed_ms.toFixed(0)} ms</span>`;
+    pending.parentElement.appendChild(tag);
+
+    statusEl.textContent = `done — ${data.usage?.completion_tokens ?? '?'} tokens`;
+    loadHistory();
+  } catch (e) {
+    pending.textContent = 'network error: ' + e;
+    pending.classList.add('error');
+    pending.classList.remove('pending');
+    statusEl.textContent = 'request failed';
+  } finally {
+    $('sendBtn').disabled = false;
+    promptEl.focus();
+  }
+}
+
+function clearConversation() {
+  conversation = [];
+  chatLog.innerHTML = '';
+  statusEl.textContent = 'conversation cleared';
+}
+
+function fmtTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString();
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch('/route/history?limit=50');
+    const data = await res.json();
+    const wrap = $('historyWrap');
+    if (!data.entries.length) {
+      wrap.innerHTML = '<div class="empty">No requests yet.</div>';
+      return;
+    }
+    const rows = data.entries.map(e => `
+      <tr class="${e.error ? 'err' : ''}">
+        <td>${fmtTime(e.ts)}</td>
+        <td class="prompt" title="${e.prompt.replace(/"/g, '&quot;')}">${emojiFor(e.route)} ${e.prompt || '(empty)'}</td>
+        <td class="model">${e.model}</td>
+        <td>${e.stage}</td>
+        <td>${e.reason}</td>
+        <td>${e.error ? 'error' : (e.completion_tokens ?? '—')}</td>
+        <td>${e.elapsed_ms.toFixed(1)} ms</td>
+      </tr>`).join('');
+    wrap.innerHTML = `<table>
+      <thead><tr><th>time</th><th>prompt</th><th>model</th><th>stage</th><th>reason</th><th>tokens</th><th>route time</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  } catch (e) { /* transient */ }
+}
+
+$('previewBtn').addEventListener('click', previewRoute);
+$('sendBtn').addEventListener('click', sendPrompt);
+$('clearBtn').addEventListener('click', clearConversation);
+promptEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
+});
+
+loadModels();
+loadHistory();
+setInterval(loadHistory, 4000);
+</script>
+</body>
+</html>

@@ -1,0 +1,145 @@
+# Model registry for Legend Mode.
+#
+# Each entry is resolved to a local .gguf by, in order:
+#   1. `glob` patterns, searched under the HF cache and ./models
+#   2. `hf download <repo> <file>` if nothing matched and `auto_download` is true
+#
+# `alias` becomes the Ollama tag `legend/<alias>`.
+# `keep_alive` is passed per request: -1 pins the model in RAM forever, "5m" lets
+# Ollama evict it after five idle minutes. Only the pinned tier survives eviction.
+#
+# temperature/top_p/top_k/repeat_penalty are per-tier sampling defaults (see
+# ModelSpec.sampling_defaults in app/config.py) — None/omitted leaves Ollama's own
+# default in place, and a caller-supplied temperature/top_p in the API request
+# always overrides whatever's set here. The shared system prompt (identity, not
+# sampling) lives in app/persona.py, not here.
+#
+# Current layout (accuracy/efficiency test, 230M and 2B tiers both dropped — three
+# answering models only, per Settings.router_alias in app/config.py):
+#   general (350M, pinned)  -> trivial replies + stage-3 classifier + everyday chat
+#   embed (pinned)          -> routing only, never answers
+#   small (Qwen3.5-0.8B)    -> lighter reasoning + the only remaining tools/vision tier
+#   think (LFM2.5-1.2B)     -> heavier, explicit step-by-step reasoning
+# The 230M classifier was measurably worse than 350M (misrouted a reasoning question
+# straight into a bad trivial-tier answer) — general now fills that role instead,
+# since Settings.router_alias defaults to "general".
+
+defaults:
+  num_ctx: 8192
+  auto_download: true
+
+models:
+  # --- Pinned tier: always resident, ~290 MB combined ---
+
+  - alias: general
+    tier: general
+    repo: LiquidAI/LFM2.5-350M-GGUF
+    file: LFM2.5-350M-Q4_K_M.gguf
+    glob:
+      - "**/LFM2.5-350M*Q4_K_M.gguf"
+    keep_alive: -1
+    num_ctx: 4096
+    # Not an Unsloth build: Unsloth publishes no LFM2.5-350M, only upstream LiquidAI.
+    # Originally pulled straight through `ollama pull liquidai/lfm2.5-350m:q4_k_m` and
+    # tagged in with `ollama cp`, so re-running import_models.py will find the tag
+    # already present and skip it; the repo/file above are here so a from-scratch
+    # machine can still resolve and import it normally.
+    # Serves three roles: trivial replies, stage-3 classification (see
+    # Settings.router_alias), and everyday chat — kept moderate rather than tuned
+    # purely for one of those. (The stage-3 classifier call in
+    # app/router/classifier.py hardcodes its own temperature: 0.0 regardless of
+    # this — this only affects the user-facing replies it generates directly.)
+    # Short system prompt: at 350M a long instruction block competes with the actual
+    # question, and this tier kept volunteering name-talk in unrelated replies. The
+    # exact wording is measured, not guessed — read the notes in app/persona.py before
+    # editing either prompt.
+    persona: brief
+    temperature: 0.6
+    top_p: 0.9
+    top_k: 40
+    repeat_penalty: 1.1
+
+  - alias: embed
+    tier: embed
+    repo: unsloth/bge-small-en-v1.5-GGUF
+    file: bge-small-en-v1.5-f16.gguf
+    glob:
+      - "**/bge-small-en-v1.5*.gguf"
+    keep_alive: -1
+    num_ctx: 512
+    embedding: true
+
+  # --- Swapped tier: at most one resident at a time ---
+
+  - alias: small
+    tier: small
+    repo: unsloth/Qwen3.5-0.8B-GGUF
+    file: Qwen3.5-0.8B-Q4_K_M.gguf
+    glob:
+      - "**/Qwen3.5-0.8B-Q4_K_M.gguf"
+    mmproj_glob:
+      - "**/models--unsloth--Qwen3.5-0.8B-GGUF/**/mmproj-F16.gguf"
+    mmproj_file: mmproj-F16.gguf
+    keep_alive: 5m
+    vision: true
+    tools: true
+    # Same Qwen3.5 default-thinking-ON behavior seen across this model line: without
+    # this, a plain "what is 2+2?" burns the whole token budget on a <think> block
+    # and returns empty content.
+    default_think: false
+    # Lower temperature than `general`: this tier also carries tool-calling, where
+    # a stable, literal reading of the request matters more than variety. Higher
+    # repeat_penalty than other tiers since this model line was observed looping
+    # (same duplicated phrase repeatedly) during testing without one.
+    temperature: 0.3
+    top_p: 0.85
+    top_k: 30
+    repeat_penalty: 1.15
+
+  - alias: think
+    tier: think
+    repo: unsloth/LFM2.5-1.2B-Thinking-GGUF
+    file: LFM2.5-1.2B-Thinking-Q4_K_M.gguf
+    glob:
+      - "**/LFM2.5-1.2B-Thinking-Q4_K_M.gguf"
+    keep_alive: 5m
+    thinking: true
+    # Needs headroom for the <think> block plus the actual answer.
+    default_max_tokens: 1536
+    # Reasoning benefits from a little room to explore an approach before
+    # committing, but still needs to converge — moderate temperature, not low.
+    temperature: 0.6
+    top_p: 0.95
+    top_k: 40
+    repeat_penalty: 1.1
+
+  # --- Parked for now: dropped while testing accuracy/efficiency with the smaller
+  # LFM + Qwen3.5-0.8B pairing above. Weights stay on disk; uncomment to bring one
+  # back as `large` and re-point the tools/vision routes in routes.yaml at it.
+  #
+  # - alias: large
+  #   tier: large
+  #   repo: unsloth/Qwen3.5-2B-GGUF
+  #   file: Qwen3.5-2B-Q4_K_M.gguf
+  #   glob:
+  #     - "**/Qwen3.5-2B-Q4_K_M.gguf"
+  #   mmproj_glob:
+  #     - "**/models--unsloth--Qwen3.5-2B-GGUF/**/mmproj-F16.gguf"
+  #   mmproj_file: mmproj-F16.gguf
+  #   keep_alive: 2m
+  #   tools: true
+  #   vision: true
+  #   default_think: false
+  #
+  # - alias: large
+  #   tier: large
+  #   repo: unsloth/Qwen3.5-4B-GGUF
+  #   file: Qwen3.5-4B-Q4_K_M.gguf
+  #   glob:
+  #     - "**/Qwen3.5-4B-Q4_K_M.gguf"
+  #   mmproj_glob:
+  #     - "**/models--unsloth--Qwen3.5-4B-GGUF/**/mmproj-F16.gguf"
+  #   mmproj_file: mmproj-F16.gguf
+  #   keep_alive: 2m
+  #   tools: true
+  #   vision: true

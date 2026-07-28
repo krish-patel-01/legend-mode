@@ -1,0 +1,231 @@
+"""Cascade orchestration.
+
+    rules  ->  embeddings  ->  tiny LLM  ->  default
+
+Each stage may return a decision or defer. The first decision wins, and the stage that
+produced it is recorded so /route/debug can explain any choice after the fact.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import time
+from collections import OrderedDict
+from typing import Any
+
+from app.backends.ollama import OllamaClient
+from app.config import ModelRegistry, ModelSpec, RouteTable, Settings
+from app.router import rules
+from app.router.classifier import LlmClassifier
+from app.router.embed import EmbeddingRouter
+from app.router.types import RouteDecision, RouteRequest
+
+log = logging.getLogger(__name__)
+
+
+def extract_text(messages: list[dict[str, Any]]) -> str:
+    """Last user turn, flattened. OpenAI allows content to be a list of parts."""
+    for msg in reversed(messages):
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = [
+                p.get("text", "")
+                for p in content
+                if isinstance(p, dict) and p.get("type") == "text"
+            ]
+            return "\n".join(filter(None, parts))
+    return ""
+
+
+def has_images(messages: list[dict[str, Any]]) -> bool:
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            if any(
+                isinstance(p, dict) and p.get("type") in {"image_url", "input_image"}
+                for p in content
+            ):
+                return True
+        if msg.get("images"):  # Ollama-native shape, accepted for convenience
+            return True
+    return False
+
+
+class RouterEngine:
+    def __init__(
+        self,
+        client: OllamaClient,
+        registry: ModelRegistry,
+        routes: RouteTable,
+        settings: Settings,
+    ) -> None:
+        self._client = client
+        self._registry = registry
+        self._routes = routes
+        self._settings = settings
+
+        self._router_spec = self._resolve_router_spec()
+        self.embedder = EmbeddingRouter(client, registry, routes)
+        self.classifier = LlmClassifier(client, self._router_spec, routes)
+
+        self._cache: OrderedDict[str, RouteDecision] = OrderedDict()
+
+        # One large-tier generation at a time. Two concurrent requests would otherwise
+        # thrash the model in and out of a single residency slot, which on CPU costs
+        # far more than simply queueing.
+        self._large_lock = asyncio.Lock()
+
+    # --- setup --------------------------------------------------------------
+
+    def _resolve_router_spec(self) -> ModelSpec:
+        """Prefer the configured router model; fall back if it was never imported."""
+        spec = self._registry.by_alias(self._settings.router_alias)
+        return spec
+
+    async def verify_models(self) -> ModelSpec:
+        """Swap in the fallback router if the primary tag is missing from Ollama."""
+        try:
+            available = await self._client.tags()
+        except Exception as exc:  # noqa: BLE001 - startup diagnostics only
+            log.warning("could not list Ollama tags: %s", exc)
+            return self._router_spec
+
+        primary = self._registry.by_alias(self._settings.router_alias)
+        if primary.tag in available:
+            return self._router_spec
+
+        fallback = self._registry.get(primary.fallback or "")
+        if fallback and fallback.tag in available:
+            log.warning(
+                "%s not imported; routing with fallback %s. "
+                "Run scripts/import_models.py once the 350M is downloaded.",
+                primary.tag,
+                fallback.tag,
+            )
+            self._router_spec = fallback
+            self.classifier = LlmClassifier(self._client, fallback, self._routes)
+        else:
+            log.error(
+                "neither %s nor its fallback is imported. Run scripts/import_models.py.",
+                primary.tag,
+            )
+        return self._router_spec
+
+    @property
+    def router_spec(self) -> ModelSpec:
+        return self._router_spec
+
+    async def warmup(self) -> None:
+        await self.verify_models()
+        try:
+            await self.embedder.build()
+        except Exception as exc:  # noqa: BLE001 - degrade to rules + classifier
+            log.warning("embedding stage unavailable: %s", exc)
+        for spec in self._registry.pinned:
+            await self._client.preload(spec)
+
+    # --- resolution ---------------------------------------------------------
+
+    def spec_for(self, decision: RouteDecision) -> ModelSpec:
+        """Map a decision onto a concrete model, tolerating an unknown route."""
+        if decision.stage == "override":
+            if spec := self._registry.get(decision.model):
+                return spec
+            raise KeyError(f"unknown model alias {decision.model!r}")
+
+        try:
+            alias = self._routes.by_name(decision.route).model
+        except KeyError:
+            log.warning("route %r not in routes.yaml; using default", decision.route)
+            alias = self._routes.by_name(self._settings.default_route).model
+
+        # The router role resolves to whichever model is actually backing it — not
+        # necessarily an alias literally named "router" (see Settings.router_alias).
+        if alias == self._settings.router_alias:
+            return self._router_spec
+        return self._registry.by_alias(alias)
+
+    def lock_for(self, spec: ModelSpec) -> asyncio.Lock | None:
+        return self._large_lock if spec.tier == "large" else None
+
+    # --- the cascade --------------------------------------------------------
+
+    async def route(self, req: RouteRequest) -> RouteDecision:
+        started = time.perf_counter()
+
+        if decision := rules.apply(req):
+            decision.elapsed_ms = (time.perf_counter() - started) * 1000
+            return self._finalize(decision)
+
+        key = self._cache_key(req)
+        if cached := self._cache_get(key):
+            hit = cached.model_copy(
+                update={
+                    "stage": "cache",
+                    "reason": f"cached ({cached.stage}: {cached.reason})",
+                    "elapsed_ms": (time.perf_counter() - started) * 1000,
+                }
+            )
+            return hit
+
+        decision = await self._slow_path(req)
+        decision.elapsed_ms = (time.perf_counter() - started) * 1000
+        decision = self._finalize(decision)
+        self._cache_put(key, decision)
+        return decision
+
+    async def _slow_path(self, req: RouteRequest) -> RouteDecision:
+        if decision := await self.embedder.classify(req.text):
+            return decision
+
+        if not self._settings.disable_classifier:
+            if decision := await self.classifier.classify(req.text):
+                return decision
+
+        return RouteDecision(
+            route=self._settings.default_route,
+            stage="fallback",
+            reason="no stage was confident; using default route",
+            confidence=0.3,
+        )
+
+    def _finalize(self, decision: RouteDecision) -> RouteDecision:
+        if decision.stage != "override":
+            try:
+                decision.model = self.spec_for(decision).alias
+            except KeyError:
+                decision.model = self._settings.default_route
+        return decision
+
+    # --- decision cache -----------------------------------------------------
+
+    def _cache_key(self, req: RouteRequest) -> str:
+        blob = f"{req.text}|{req.has_tools}|{req.has_images}|{req.message_count > 1}"
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    def _cache_get(self, key: str) -> RouteDecision | None:
+        if key not in self._cache:
+            return None
+        self._cache.move_to_end(key)
+        return self._cache[key]
+
+    def _cache_put(self, key: str, decision: RouteDecision) -> None:
+        self._cache[key] = decision
+        self._cache.move_to_end(key)
+        while len(self._cache) > self._settings.decision_cache_size:
+            self._cache.popitem(last=False)
+
+
+# --- extension point --------------------------------------------------------
+#
+# Server-side tool execution goes here. Today the API passes `tools` straight to the
+# large tier and returns `tool_calls` to the caller unmodified. A future agent loop
+# would sit between `route()` and the API layer: dispatch tool_calls against a local
+# registry, append the results as `role: "tool"` messages, and re-enter the model —
+# re-routing on each turn so a cheap follow-up doesn't stay pinned to the large model.

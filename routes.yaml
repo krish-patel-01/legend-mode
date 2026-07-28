@@ -1,0 +1,114 @@
+# Routing table.
+#
+# Each route names the model alias that serves it and carries a bank of labeled
+# example prompts. At startup the examples are embedded with bge-small and averaged
+# into a centroid; stage 2 of the cascade picks the nearest centroid by cosine
+# similarity, accepting only if the top-1 margin beats `min_margin`.
+
+thresholds:
+  # Accept the embedding verdict when cosine(top1) >= this.
+  min_score: 0.42
+  # ...and it beats the runner-up by at least this much. Otherwise escalate to the
+  # 350M classifier.
+  min_margin: 0.06
+
+routes:
+  trivial:
+    model: general
+    description: greetings, acknowledgements, one-word answers, tiny factual lookups
+    examples:
+      - "hi"
+      - "hello there"
+      - "thanks!"
+      - "ok got it"
+      - "good morning"
+      - "what's your name?"
+      - "who are you"
+      - "yes"
+      - "never mind"
+      - "bye"
+      - "what is the capital of France"
+      - "how many days in a leap year"
+      - "spell restaurant"
+      - "what time zone is IST"
+      - "convert 10 km to miles"
+
+  chat:
+    model: general
+    description: ordinary conversation, short explanations, drafting, rewriting
+    examples:
+      - "explain what a REST API is"
+      - "write a short email asking for a deadline extension"
+      - "summarize this paragraph for me"
+      - "what's the difference between TCP and UDP"
+      - "give me five names for a coffee shop"
+      - "rewrite this to sound more formal"
+      - "what does the word ubiquitous mean"
+      - "tell me a joke about programmers"
+      - "describe how photosynthesis works"
+      - "make this bullet list flow as a paragraph"
+      - "what are some good beginner books on statistics"
+      - "translate good evening into Spanish"
+      - "help me word a birthday message"
+      - "what's a good analogy for recursion"
+      - "list the planets in order"
+
+  think:
+    model: think
+    description: multi-step reasoning, math, proofs, debugging, planning, tradeoff analysis
+    examples:
+      - "prove that the square root of 2 is irrational"
+      - "why does this recursive function overflow the stack"
+      - "work through this step by step"
+      - "if a train leaves at 3pm going 60mph and another at 4pm going 80mph, when do they meet"
+      - "design a schema for a multi-tenant billing system and justify the tradeoffs"
+      - "find the bug in this code and explain the root cause"
+      - "what's the time complexity of this algorithm and can it be improved"
+      - "compare event sourcing versus CRUD and when each breaks down"
+      - "solve for x: 3x^2 - 12x + 9 = 0"
+      - "plan a migration from monolith to services in stages"
+      - "reason about whether this lock ordering can deadlock"
+      - "derive the closed form of this recurrence"
+      - "critique this architecture and identify failure modes"
+      - "how would you approach debugging an intermittent race condition"
+      - "think carefully about the edge cases in this spec"
+      # Word problems: arithmetic dressed as a sentence. The rules stage catches the
+      # obvious "how many ... if ..." shape; these cover phrasings that skip it.
+      - "I bought 3 apples and ate 1, what am I left with"
+      - "a box holds 4 smaller boxes, and I have two of those — count them all"
+      - "if a shirt is 40 dollars with 25% off, what do I pay in the end"
+
+  tools:
+    model: small
+    description: requests that need external actions, live data, or function calls
+    examples:
+      - "search the web for the latest news on this"
+      - "what's the weather in Mumbai right now"
+      - "look up the current price of bitcoin"
+      - "read the file config.json and tell me what's in it"
+      - "run this query against the database"
+      - "send an email to the team about the outage"
+      - "check my calendar for tomorrow"
+      - "fetch the contents of that URL"
+      - "list the files in this directory"
+      - "create a ticket for this bug"
+      - "what's on the front page of Hacker News today"
+      - "call the API and show me the response"
+      - "book a meeting for 3pm Friday"
+      - "get the latest stock quote for NVDA"
+      - "look this up online and summarize"
+
+  vision:
+    model: small
+    description: anything referring to an attached image
+    examples:
+      - "what's in this image"
+      - "describe this picture"
+      - "read the text in this screenshot"
+      - "what does this chart show"
+      - "is there a cat in this photo"
+      - "transcribe this handwriting"
+      - "what's wrong with this UI screenshot"
+      - "identify the objects in this image"
+      - "what colour is the car in the photo"
+      - "extract the table from this scan"
