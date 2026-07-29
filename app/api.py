@@ -19,8 +19,8 @@ from fastapi.responses import StreamingResponse
 
 from app import guardrails
 from app.backends.ollama import OllamaError
-from app.persona import ensure_system_prompt
-from app.router.engine import extract_text, has_images
+from app.persona import DISPUTE_NOTE, ensure_system_prompt
+from app.router.engine import anchor_text, extract_text, has_images
 from app.router.types import RouteRequest
 
 log = logging.getLogger(__name__)
@@ -100,6 +100,7 @@ async def chat_completions(request: Request) -> Any:
         has_images=False,  # image requests are rejected above, never routed
         forced_model=forced,
         message_count=len(messages),
+        anchor_text=anchor_text(messages),
     )
     decision = await engine.route(req)
     spec = engine.spec_for(decision)
@@ -130,7 +131,10 @@ async def chat_completions(request: Request) -> Any:
     grounding = guardrails.ground(req.text)
     if grounding is not None:
         decision.grounded = grounding.kind
-        chat_messages = _with_grounding(chat_messages, grounding)
+        chat_messages = _append_system(chat_messages, guardrails.as_system_note(grounding))
+
+    if decision.followup in {"dispute", "weak_dispute"}:
+        chat_messages = _append_system(chat_messages, DISPUTE_NOTE)
 
     if body.get("stream"):
         return StreamingResponse(
@@ -153,6 +157,23 @@ async def chat_completions(request: Request) -> Any:
     except OllamaError as exc:
         history.add(prompt=req.text, tag=spec.tag, decision=decision, error=str(exc))
         raise HTTPException(502, str(exc)) from exc
+
+    # A thinking model that spends its whole budget reasoning returns content="" with
+    # the answer never emitted. Empty output reads as a broken server, and sticky
+    # routing made it reachable by sending terse follow-ups to the reasoning tier —
+    # "nope" against a hard problem is exactly the shape that runs the budget out.
+    # Saying so is worse than a real answer but better than silence.
+    message = result.get("message") or {}
+    if not (message.get("content") or "").strip() and not message.get("tool_calls"):
+        log.warning(
+            "%s produced no content (%s tokens); returning a fallback",
+            spec.alias, result.get("eval_count"),
+        )
+        message["content"] = (
+            "I ran out of thinking room before I finished that one. "
+            "Ask me for a specific part of it and I'll work through that."
+        )
+        result["message"] = message
 
     # A model that restates a supplied fact incorrectly is worth knowing about: it
     # means grounding alone isn't enough for this tier and the case needs the
@@ -192,17 +213,14 @@ def _openai_options(body: dict[str, Any], spec) -> dict[str, Any]:
     return options
 
 
-def _with_grounding(
-    messages: list[dict[str, Any]], grounding: guardrails.Grounding
-) -> list[dict[str, Any]]:
-    """Append the computed fact to the system message.
+def _append_system(messages: list[dict[str, Any]], note: str) -> list[dict[str, Any]]:
+    """Append a note to the system message.
 
     Appended rather than prepended, and to the system turn rather than the user's, so
     the persona wording measured in app/persona.py keeps its position — that module's
     notes record that moving text around in these prompts changes small-model behaviour
     in ways unit tests can't see.
     """
-    note = guardrails.as_system_note(grounding)
     head, *rest = messages
     if head.get("role") != "system":
         return [{"role": "system", "content": note}, *messages]

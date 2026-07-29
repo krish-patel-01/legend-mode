@@ -61,6 +61,32 @@ _FULL = (
 )
 
 
+# Appended when the sticky stage sees the user disputing the previous answer.
+#
+# Two failures to fix at once. The first is sycophancy: told "its incorrect", the 350M
+# replied "You're right! The number of boxes is indeed 2, not 3" — agreeing without
+# rechecking anything. The second is budget exhaustion: routing disputes to the 1.2B
+# means a bare "nope" arrives with no concrete claim attached, and the model reasons in
+# circles until the token cap and returns nothing at all.
+#
+# So the note does three jobs — refuse the reflex to capitulate, bound the reply, and
+# give the model something cheap to do when the dispute carries no information at all.
+# That last clause matters: a bare "nope" offers nothing to re-check, and without an
+# alternative the model reasons in circles until the budget runs out.
+#
+# The length instruction sits mid-note, not at the end. Ending on "Answer in no more
+# than three sentences." made the 1.2B reply "The total is four. Three sentences: Four
+# boxes." — the same trailing-instruction echo this module's docstring warns about. The
+# note now ends on an action, and if the model does echo that one it asks the user which
+# part they disagree with, which is the wanted behaviour anyway.
+DISPUTE_NOTE = (
+    "The user is disputing your previous answer. Keep this reply to two or three "
+    "sentences. Do not simply agree that you were wrong: re-check the specific claim, "
+    "and if your answer was right, say so plainly and give the one reason why. If they "
+    "have not said what is wrong, ask them which part they disagree with."
+)
+
+
 def build_system_prompt(assistant_name: str | None, style: str = "full") -> str:
     brief = style == "brief"
     if assistant_name:

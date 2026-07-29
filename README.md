@@ -145,12 +145,28 @@ Decisions are cached by prompt hash so repeats skip straight past all three stag
 note this caches the *routing decision*, not the generated answer; the model still
 generates fresh output every time.
 
-Routing only looks at the **last** message, not the full thread — cheap and fast on
-purpose. Generation always gets the full conversation regardless, so whichever model
-gets picked still has complete context; the tradeoff is a short ambiguous follow-up
-(e.g. "so what's the answer?") can get classified into a lighter tier than the thread
-really warrants, even though that tier still answers coherently since it sees
-everything.
+Between rules and embeddings sits a **sticky** stage (`RouterEngine._sticky`) for short
+follow-ups. Routing otherwise reads only the latest message, which broke threads: the
+box word problem routed to `think`, which answered "4" correctly, and then "its
+incorrect" routed on its own as a three-word message to the 350M, which agreed and
+invented "3".
+
+- An explicit dispute ("that's wrong", "are you sure") **escalates** to `think`
+  regardless of history — whatever answered last was evidently not good enough.
+- A bare "no"/"nope", or a continuation ("why", "explain that", "go on"), sticks to the
+  tier already handling the thread, but only if that tier is in `sticky_routes`.
+- Pleasantries and fresh questions are untouched. Continuation patterns are anchored at
+  both ends so "explain that" sticks while "explain what a REST API is" routes normally.
+
+Which tier is handling the thread is recovered by re-routing the last user turn that is
+**not itself a follow-up** (`anchor_text`), rather than by storing conversation state.
+Routing stays a pure function of the messages, so the API remains stateless. The
+walk-back matters: in a run of "its incorrect" / "nope" / "nope", re-routing merely the
+previous turn finds another "nope", which lands on the trivial tier in isolation — the
+exact demotion the stage exists to prevent.
+
+Generation always gets the full conversation regardless, so whichever model is picked
+has complete context.
 
 ## Guardrails
 
@@ -252,26 +268,33 @@ uv run pytest
 
 Router cascade tests run against a stub backend — no model loads, no Ollama needed.
 
-## Known broken
+## Known limitations
 
-**Short follow-ups get demoted mid-thread, and the cheap tier then contradicts a correct
-answer.** Reproduced end to end: the box word problem routes to `think`, which answers
-"4" correctly; the follow-up "its incorrect" is a three-word message, so routing — which
-only reads the last message — sends it to the 350M, which capitulates and invents "3".
+**Capitulation under repeated pushback is reduced, not solved.** Sticky routing keeps the
+whole thread on `think` — verified over the original transcript, where all four turns now
+stay on the reasoning tier and none contradicts the correct answer. `DISPUTE_NOTE` in
+`app/persona.py` tells the model not to simply agree it was wrong. But the 1.2B still
+sometimes caves in a different way, answering "the count depends on interpretation, it's
+3". Holding a correct answer against a user who insists otherwise is a model-capability
+limit, and no routing change reaches it.
 
-This is the failure that motivated the guardrails, and guardrails do not fix it: there is
-no deterministic check for a word problem, and the tier that gave the right answer is not
-the tier being asked to defend it. The fix is a sticky tier — a follow-up that is short,
-or that disputes the previous turn, should stay on the model that produced it — which
-means routing has to read more than the last message.
+Two smaller things the dispute path exposed, both handled:
+
+- Terse disputes gave the 1.2B nothing concrete to re-check, and it reasoned in circles
+  until the token budget ran out and returned **empty content**. `app/api.py` now
+  substitutes an honest message, and `DISPUTE_NOTE` tells the model to ask which part is
+  disputed when the user hasn't said.
+- An earlier `DISPUTE_NOTE` ended with "Answer in no more than three sentences." and the
+  1.2B replied "The total is four. Three sentences: Four boxes." — the same
+  trailing-instruction echo documented under Persona. The length cue now sits mid-note.
 
 ## Not built yet
 
-- **Sticky / conversation-aware routing**, per the section above. This is the next piece
-  of real work.
 - **Adjudication.** The 1.2B can verify an answer at ~100% on the measured set, but at
   ~28 s a verification pass cannot run on every turn; it needs an effort estimate made
   *before* answering, so only the questions that warrant it pay for it.
+- **An eval set.** Every number in this README came from a throwaway script. Anything
+  further needs fixed cases with known answers, or improvements can't be told from noise.
 - **Tool execution.** The API forwards `tools` and returns `tool_calls` as-is; there's
   no server-side agent loop that dispatches them, and no tier currently advertises tool
   support at all. `app/router/engine.py` documents the extension point.

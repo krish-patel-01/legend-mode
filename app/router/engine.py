@@ -43,6 +43,21 @@ def extract_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+def anchor_text(messages: list[dict[str, Any]]) -> str:
+    """The most recent user turn that isn't itself a follow-up.
+
+    Walks back past a run of "its incorrect" / "nope" / "why" so the sticky stage can
+    ask which tier the thread's actual question belongs on. Returns "" when every prior
+    user turn is a follow-up, or when there is no prior turn at all.
+    """
+    users = [m for m in messages if m.get("role") == "user"]
+    for msg in reversed(users[:-1]):  # exclude the turn being routed
+        text = extract_text([msg])
+        if text.strip() and rules.followup_kind(text) is None:
+            return text
+    return ""
+
+
 def has_images(messages: list[dict[str, Any]]) -> bool:
     for msg in messages:
         content = msg.get("content")
@@ -163,6 +178,10 @@ class RouterEngine:
             decision.elapsed_ms = (time.perf_counter() - started) * 1000
             return self._finalize(decision)
 
+        if decision := await self._sticky(req):
+            decision.elapsed_ms = (time.perf_counter() - started) * 1000
+            return self._finalize(decision)
+
         key = self._cache_key(req)
         if cached := self._cache_get(key):
             hit = cached.model_copy(
@@ -179,6 +198,53 @@ class RouterEngine:
         decision = self._finalize(decision)
         self._cache_put(key, decision)
         return decision
+
+    async def _sticky(self, req: RouteRequest) -> RouteDecision | None:
+        """Keep a short follow-up on the tier that answered the turn it refers to.
+
+        Runs after rules so it can never override a structural signal — "who are you?"
+        mid-thread is still an identity question, not a continuation.
+
+        Which tier handled the previous turn is recovered by routing that turn's text
+        again rather than by storing conversation state. Routing is a pure function of
+        the message, so the answer is identical, and the decision cache means the
+        previous turn was almost always resolved a moment ago and costs nothing to look
+        up. The recursive call passes no `prev_user_text`, so it cannot recurse further.
+        """
+        kind = rules.followup_kind(req.text)
+        if kind is None:
+            return None
+
+        # An explicit "that's wrong" needs no history: whatever answered last was not
+        # good enough, so send it somewhere better.
+        if kind == "dispute":
+            return RouteDecision(
+                route=self._settings.escalate_route,
+                stage="sticky",
+                reason="user disputed the previous answer; escalating",
+                confidence=0.75,
+                followup=kind,
+            )
+
+        if not req.anchor_text:
+            return None
+
+        anchor = await self.route(
+            RouteRequest(
+                text=req.anchor_text,
+                message_count=max(req.message_count - 2, 1),
+            )
+        )
+        if anchor.route not in self._settings.sticky_routes:
+            return None
+
+        return RouteDecision(
+            route=anchor.route,
+            stage="sticky",
+            reason=f"{kind} in a {anchor.route!r} thread; staying on that tier",
+            confidence=0.7,
+            followup=kind,
+        )
 
     async def _slow_path(self, req: RouteRequest) -> RouteDecision:
         if decision := await self.embedder.classify(req.text):

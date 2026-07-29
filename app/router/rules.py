@@ -68,6 +68,62 @@ _QUANTITY = re.compile(
     re.IGNORECASE,
 )
 
+# --- follow-ups -------------------------------------------------------------
+#
+# Routing reads only the latest message, which breaks on short replies: the box word
+# problem routes to `think`, which answers "4" correctly, and then "its incorrect"
+# routes as its own three-word message to the 350M, which capitulates and invents "3".
+# The tier that produced an answer should be the tier asked to defend it.
+#
+# Disputes are split by strength on purpose. "that's wrong" is unambiguous whatever came
+# before it, so it escalates to the reasoning tier outright. A bare "no" is not — it is
+# just as likely to be answering a question the assistant asked — so it only counts as a
+# dispute when the previous turn was already on a tier worth staying on.
+_DISPUTE_STRONG = re.compile(
+    r"^\s*(that'?s |it'?s |thats |this is )?(not (right|correct|true)|wrong|incorrect"
+    r"|mistaken|false)\b"
+    r"|^\s*(are you sure|you'?re wrong|check (it |that |again)|check again|recheck"
+    r"|re-check|try again|that'?s not (it|right)|doesn'?t (look|seem) right)\b",
+    re.IGNORECASE,
+)
+_DISPUTE_WEAK = re.compile(r"^\s*(no+|nope|nah|uh-?uh)[\s.!?]*$", re.IGNORECASE)
+
+# Asks for more of the same reasoning, so it belongs on the same tier. Anchored at both
+# ends: a continuation is the whole message, not a prefix of one. Without the trailing
+# anchor "explain" would swallow "explain what a REST API is", which is a fresh question
+# that deserves its own routing rather than inheriting the previous turn's tier.
+_CONTINUATION = re.compile(
+    r"^\s*(why|how (come|so)"
+    r"|explain( (that|this|it|more|again|further))?"
+    r"|elaborate( on (that|this|it))?"
+    r"|go on|continue|keep going|say more|expand( on (that|this|it))?"
+    r"|(show|walk) (me )?(your work|the steps?|through (it|that))"
+    r"|show your work|prove it|break it down|(in )?more detail"
+    r"|what about (that|this|it)|are you certain)"
+    r"[\s.,!?]*$",
+    re.IGNORECASE,
+)
+
+
+def followup_kind(text: str) -> str | None:
+    """Classify a short reply as a follow-up to the previous turn, or None.
+
+    Returns "dispute" (escalate regardless of history), "weak_dispute" or
+    "continuation" (both only meaningful if the previous turn was on a sticky tier).
+    """
+    stripped = text.strip()
+    # A long message carries its own signal and should route on its own merits.
+    if not stripped or len(stripped) > 120:
+        return None
+    if _DISPUTE_STRONG.search(stripped):
+        return "dispute"
+    if _DISPUTE_WEAK.match(stripped):
+        return "weak_dispute"
+    if _CONTINUATION.match(stripped):
+        return "continuation"
+    return None
+
+
 _CODE_FENCE = re.compile(r"```")
 
 # Above this many characters, a prompt is doing something substantial enough that the

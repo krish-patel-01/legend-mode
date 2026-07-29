@@ -13,7 +13,7 @@ import pytest
 from app.config import ModelRegistry, ModelSpec, RouteTable, Settings, load_models, load_routes
 from app.router.classifier import LlmClassifier
 from app.router.embed import EmbeddingRouter
-from app.router.engine import RouterEngine, extract_text, has_images
+from app.router.engine import RouterEngine, anchor_text, extract_text, has_images
 from app.router.types import RouteRequest
 from app.config import ROOT
 
@@ -189,6 +189,94 @@ async def test_live_data_phrase_still_routes_somewhere_valid(engine):
     assert decision.route in known
 
 
+# --- sticky follow-ups ----------------------------------------------------------------
+
+_BOX = "How many boxes do I have if I have two boxes with one box inside each?"
+
+
+@pytest.mark.parametrize(
+    "text", ["its incorrect", "that's wrong", "thats not right", "are you sure", "wrong"]
+)
+async def test_dispute_escalates_even_without_history(engine, text):
+    # The transcript that started this: `think` answered the box problem correctly,
+    # then "its incorrect" routed on its own as a three-word message to the 350M, which
+    # agreed and invented a new wrong number. A dispute must never land on a tier that
+    # cannot reason about the thing being disputed.
+    decision = await engine.route(RouteRequest(text=text, message_count=3))
+    assert decision.route == "think"
+    assert decision.stage == "sticky"
+
+
+async def test_weak_dispute_sticks_only_when_the_previous_turn_was_sticky(engine):
+    stuck = await engine.route(
+        RouteRequest(text="nope", message_count=4, anchor_text=_BOX)
+    )
+    assert stuck.route == "think"
+    assert stuck.stage == "sticky"
+
+    # Same word, ordinary chat thread: "no" is as likely to be answering a question the
+    # assistant asked, so it must not drag a cheap thread onto the reasoning tier.
+    loose = await engine.route(
+        RouteRequest(
+            text="nope", message_count=4, anchor_text="give me five names for a coffee shop"
+        )
+    )
+    assert loose.stage != "sticky"
+
+
+@pytest.mark.parametrize("text", ["why", "explain that", "show your work", "go on"])
+async def test_continuation_stays_on_the_reasoning_tier(engine, text):
+    decision = await engine.route(
+        RouteRequest(text=text, message_count=4, anchor_text=_BOX)
+    )
+    assert decision.route == "think"
+    assert decision.stage == "sticky"
+
+
+@pytest.mark.parametrize("text", ["prove it", "walk me through it"])
+async def test_continuations_already_covered_by_the_reasoning_rule(engine, text):
+    # These carry an explicit reasoning cue of their own, so stage 1 claims them before
+    # sticky ever runs. Same destination, cheaper path — assert the tier, not the stage.
+    decision = await engine.route(
+        RouteRequest(text=text, message_count=4, anchor_text=_BOX)
+    )
+    assert decision.route == "think"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "thanks!",
+        "ok got it",
+        "explain what a REST API is",   # a fresh question, not a continuation
+        "why does this recursive function overflow the stack",
+        "what about the tax on top of that, does it apply before or after the discount",
+    ],
+)
+async def test_sticky_does_not_capture_ordinary_messages(engine, text):
+    decision = await engine.route(
+        RouteRequest(text=text, message_count=4, anchor_text=_BOX)
+    )
+    assert decision.stage != "sticky"
+
+
+async def test_rules_still_beat_sticky(engine):
+    # An identity question mid-thread is an identity question, not a continuation.
+    decision = await engine.route(
+        RouteRequest(text="who are you?", message_count=6, anchor_text=_BOX)
+    )
+    assert decision.route == "trivial"
+    assert decision.stage == "rules"
+
+
+async def test_sticky_lookup_cannot_recurse(engine):
+    # The previous turn is itself a dispute; resolving it must terminate.
+    decision = await engine.route(
+        RouteRequest(text="nope", message_count=6, anchor_text="that's wrong")
+    )
+    assert decision.route == "think"
+
+
 # --- stage 2: embeddings --------------------------------------------------------------
 
 
@@ -235,6 +323,35 @@ async def test_repeated_prompt_hits_cache(engine):
 
 
 # --- helpers -----------------------------------------------------------------------
+
+
+def test_anchor_text_skips_a_run_of_follow_ups():
+    # The failure this fixes: with only the immediately-previous turn to go on, a
+    # second "nope" sees a first "nope", which routes to the trivial tier in isolation,
+    # and the thread silently falls off the reasoning tier.
+    messages = [
+        {"role": "user", "content": _BOX},
+        {"role": "assistant", "content": "4."},
+        {"role": "user", "content": "its incorrect"},
+        {"role": "assistant", "content": "4."},
+        {"role": "user", "content": "nope"},
+        {"role": "assistant", "content": "4."},
+        {"role": "user", "content": "nope"},
+    ]
+    assert anchor_text(messages) == _BOX
+
+
+def test_anchor_text_is_empty_on_the_first_turn():
+    assert anchor_text([{"role": "user", "content": "hi"}]) == ""
+
+
+def test_anchor_text_ignores_assistant_turns():
+    messages = [
+        {"role": "user", "content": "what is a monad"},
+        {"role": "assistant", "content": "why is this hard"},  # looks like a follow-up
+        {"role": "user", "content": "explain that"},
+    ]
+    assert anchor_text(messages) == "what is a monad"
 
 
 def test_extract_text_prefers_last_user_message():

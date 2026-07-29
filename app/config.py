@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     # "router". Currently the 350M `general` tier fills this role.
     router_alias: str = "general"
 
+    # Routes worth staying on when the user sends a short follow-up. Only tiers that
+    # cost something to reach belong here: sticking to a cheap tier is what the cascade
+    # would do anyway, so listing one would just spend a routing pass to change nothing.
+    sticky_routes: list[str] = ["think"]
+
+    # Where a disputed answer goes. Being told "that's wrong" is the strongest signal
+    # available that the previous tier was not good enough, so it escalates rather than
+    # re-asking whichever model just got it wrong.
+    escalate_route: str = "think"
+
     # Start loading the predicted model while classification is still running.
     preload_predicted: bool = True
 
