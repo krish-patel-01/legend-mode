@@ -80,21 +80,30 @@ async def engine(registry, routes, settings) -> RouterEngine:
 
 
 async def test_forced_model_overrides_everything(engine):
-    decision = await engine.route(RouteRequest(text="hi", forced_model="small"))
+    decision = await engine.route(RouteRequest(text="hi", forced_model="think"))
     assert decision.stage == "override"
-    assert decision.model == "small"
+    assert decision.model == "think"
 
 
-async def test_images_route_to_vision(engine):
-    decision = await engine.route(RouteRequest(text="what is this", has_images=True))
-    assert decision.route == "vision"
-    assert decision.stage == "rules"
+async def test_every_route_resolves_to_a_registered_model(engine, registry):
+    # routes.yaml and models.yaml drifted apart when the tools/vision tiers were
+    # parked; this catches a route pointing at an alias that no longer exists.
+    for route in engine._routes.routes:
+        assert registry.get(route.model) is not None, (
+            f"route {route.name!r} points at unknown model {route.model!r}"
+        )
 
 
-async def test_tools_present_routes_to_tools(engine):
-    decision = await engine.route(RouteRequest(text="do something", has_tools=True))
-    assert decision.route == "tools"
-    assert decision.stage == "rules"
+async def test_images_and_tools_no_longer_force_a_tier(engine):
+    # The vision and tools routes are gone. These flags must not produce a decision
+    # naming a route that routes.yaml no longer defines.
+    known = {r.name for r in engine._routes.routes}
+    for req in (
+        RouteRequest(text="what is this", has_images=True, message_count=1),
+        RouteRequest(text="do something", has_tools=True, message_count=1),
+    ):
+        decision = await engine.route(req)
+        assert decision.route in known
 
 
 async def test_opening_greeting_is_trivial(engine):
@@ -170,11 +179,14 @@ async def test_plain_quantity_lookup_is_not_a_word_problem(engine):
     assert decision.route != "think"
 
 
-async def test_live_data_phrase_routes_to_tools(engine):
+async def test_live_data_phrase_still_routes_somewhere_valid(engine):
+    # Used to assert route == "tools". With no tools tier there is nothing correct to
+    # assert beyond "it resolves"; the model will explain it has no live data access.
+    known = {r.name for r in engine._routes.routes}
     decision = await engine.route(
         RouteRequest(text="what's the weather right now", message_count=2)
     )
-    assert decision.route == "tools"
+    assert decision.route in known
 
 
 # --- stage 2: embeddings --------------------------------------------------------------

@@ -24,6 +24,8 @@ class RouteDecision(BaseModel):
     confidence: float = 1.0
     scores: dict[str, float] = Field(default_factory=dict)
     elapsed_ms: float = 0.0
+    grounded: str | None = None
+    """Which guard in app/guardrails.py supplied a computed fact, if any."""
 
     def as_meta(self) -> dict[str, Any]:
         return {
@@ -33,6 +35,7 @@ class RouteDecision(BaseModel):
             "reason": self.reason,
             "confidence": round(self.confidence, 4),
             "elapsed_ms": round(self.elapsed_ms, 2),
+            "grounded": self.grounded,
         }
 
 

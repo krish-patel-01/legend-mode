@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from app import guardrails
 from app.backends.ollama import OllamaError
 from app.persona import ensure_system_prompt
 from app.router.engine import extract_text, has_images
@@ -78,6 +79,16 @@ async def chat_completions(request: Request) -> Any:
     engine = _engine(request)
     client = _client(request)
 
+    # No tier is vision-capable since the Qwen3.5-0.8B tier was parked. Saying so is
+    # better than routing the request to a text-only model, which would answer
+    # confidently about an image it never saw.
+    if has_images(messages):
+        raise HTTPException(
+            422,
+            "this server has no vision-capable model loaded; send text only "
+            "(see the parked `small` tier in models.yaml to restore image support)",
+        )
+
     requested = str(body.get("model") or "").strip()
     forced = None if requested.lower() in _POLICY_ALIASES else requested
     if forced and engine._registry.get(forced) is None:
@@ -86,7 +97,7 @@ async def chat_completions(request: Request) -> Any:
     req = RouteRequest(
         text=extract_text(messages),
         has_tools=bool(body.get("tools")),
-        has_images=has_images(messages),
+        has_images=False,  # image requests are rejected above, never routed
         forced_model=forced,
         message_count=len(messages),
     )
@@ -113,6 +124,14 @@ async def chat_completions(request: Request) -> Any:
     settings = request.app.state.settings
     chat_messages = ensure_system_prompt(messages, settings.assistant_name, spec.persona)
 
+    # Deterministic grounding (app/guardrails.py). Injected before generation rather
+    # than checked afterwards: the model then phrases a correct fact naturally instead
+    # of producing prose that has to be parsed and patched.
+    grounding = guardrails.ground(req.text)
+    if grounding is not None:
+        decision.grounded = grounding.kind
+        chat_messages = _with_grounding(chat_messages, grounding)
+
     if body.get("stream"):
         return StreamingResponse(
             _stream(
@@ -134,6 +153,18 @@ async def chat_completions(request: Request) -> Any:
     except OllamaError as exc:
         history.add(prompt=req.text, tag=spec.tag, decision=decision, error=str(exc))
         raise HTTPException(502, str(exc)) from exc
+
+    # A model that restates a supplied fact incorrectly is worth knowing about: it
+    # means grounding alone isn't enough for this tier and the case needs the
+    # adjudication path. Advisory only — the answer is not rewritten here.
+    if grounding is not None:
+        answered = (result.get("message") or {}).get("content") or ""
+        if guardrails.contradicts(answered, grounding):
+            log.warning(
+                "%s ignored a %s grounding (%r) in its answer",
+                spec.alias, grounding.kind, grounding.value,
+            )
+            decision.grounded = f"{grounding.kind} (contradicted)"
 
     history.add(
         prompt=req.text, tag=spec.tag, decision=decision,
@@ -159,6 +190,23 @@ def _openai_options(body: dict[str, Any], spec) -> dict[str, Any]:
     if (stop := body.get("stop")) is not None:
         options["stop"] = stop if isinstance(stop, list) else [stop]
     return options
+
+
+def _with_grounding(
+    messages: list[dict[str, Any]], grounding: guardrails.Grounding
+) -> list[dict[str, Any]]:
+    """Append the computed fact to the system message.
+
+    Appended rather than prepended, and to the system turn rather than the user's, so
+    the persona wording measured in app/persona.py keeps its position — that module's
+    notes record that moving text around in these prompts changes small-model behaviour
+    in ways unit tests can't see.
+    """
+    note = guardrails.as_system_note(grounding)
+    head, *rest = messages
+    if head.get("role") != "system":
+        return [{"role": "system", "content": note}, *messages]
+    return [{**head, "content": f"{head['content']}\n\n{note}"}, *rest]
 
 
 def _route_header(decision) -> str:

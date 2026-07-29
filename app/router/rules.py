@@ -11,14 +11,11 @@ import re
 
 from app.router.types import RouteDecision, RouteRequest
 
-# Phrasings that unambiguously ask for an external action or live data.
-_TOOL_PATTERNS = re.compile(
-    r"\b(search (the )?(web|online|internet)|google it|look (it |this )?up online"
-    r"|current (price|weather|time)|latest news|right now|today'?s"
-    r"|read (the )?file|list (the )?files|run (this |the )?(query|command)"
-    r"|send (an? )?(email|message)|fetch (the )?(url|contents)|call the api)\b",
-    re.IGNORECASE,
-)
+# There was a _TOOL_PATTERNS rule here that sent "search the web" / "current weather"
+# style prompts to a dedicated tools route. Both that route and the tier behind it are
+# gone (see routes.yaml), so these prompts now fall through to chat/think like any
+# other question. Nothing can act on them either way; the difference is only which
+# model explains that it can't.
 
 # Phrasings that ask for explicit multi-step reasoning.
 _THINK_PATTERNS = re.compile(
@@ -87,15 +84,10 @@ def apply(req: RouteRequest) -> RouteDecision | None:
             reason=f"caller pinned model to {req.forced_model!r}",
         )
 
-    # Structural facts beat anything the text says.
-    if req.has_images:
-        return RouteDecision(
-            route="vision", stage="rules", reason="request contains an image part"
-        )
-    if req.has_tools:
-        return RouteDecision(
-            route="tools", stage="rules", reason="request declares a tools array"
-        )
+    # `has_images` used to force a vision tier and `has_tools` a tools tier. Neither
+    # exists now. Image requests are rejected up front in app/api.py rather than
+    # routed, and a tools array is forwarded without any tier claiming to honour it,
+    # so both fields are left for the caller's own inspection and routed on text alone.
 
     text = req.text.strip()
     if not text:
@@ -115,11 +107,6 @@ def apply(req: RouteRequest) -> RouteDecision | None:
     if req.message_count <= 1 and _TRIVIAL.match(text):
         return RouteDecision(
             route="trivial", stage="rules", reason="greeting or acknowledgement"
-        )
-
-    if _TOOL_PATTERNS.search(text):
-        return RouteDecision(
-            route="tools", stage="rules", reason="asks for live data or an external action"
         )
 
     if _THINK_PATTERNS.search(text):

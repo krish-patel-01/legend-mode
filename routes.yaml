@@ -78,37 +78,19 @@ routes:
       - "a box holds 4 smaller boxes, and I have two of those — count them all"
       - "if a shirt is 40 dollars with 25% off, what do I pay in the end"
 
-  tools:
-    model: small
-    description: requests that need external actions, live data, or function calls
-    examples:
-      - "search the web for the latest news on this"
-      - "what's the weather in Mumbai right now"
-      - "look up the current price of bitcoin"
-      - "read the file config.json and tell me what's in it"
-      - "run this query against the database"
-      - "send an email to the team about the outage"
-      - "check my calendar for tomorrow"
-      - "fetch the contents of that URL"
-      - "list the files in this directory"
-      - "create a ticket for this bug"
-      - "what's on the front page of Hacker News today"
-      - "call the API and show me the response"
-      - "book a meeting for 3pm Friday"
-      - "get the latest stock quote for NVDA"
-      - "look this up online and summarize"
-
-  vision:
-    model: small
-    description: anything referring to an attached image
-    examples:
-      - "what's in this image"
-      - "describe this picture"
-      - "read the text in this screenshot"
-      - "what does this chart show"
-      - "is there a cat in this photo"
-      - "transcribe this handwriting"
-      - "what's wrong with this UI screenshot"
-      - "identify the objects in this image"
-      - "what colour is the car in the photo"
-      - "extract the table from this scan"
+  # `tools` and `vision` used to live here, both served by the Qwen3.5-0.8B `small`
+  # tier. Both are gone with that tier (see models.yaml): image support isn't wanted
+  # right now, and nothing left advertises tools: true.
+  #
+  # Consequences worth knowing:
+  #   - Requests carrying an image are now rejected with a 422 by app/api.py rather
+  #     than being answered blind by a text-only model.
+  #   - A `tools` array is still accepted and forwarded, but no tier will emit
+  #     tool_calls, so callers get an ordinary text reply.
+  #   - Prompts that ask for live data ("what's the weather right now") no longer have
+  #     a route of their own and fall through to chat/think, which will answer from
+  #     stale parametric knowledge. Server-side deterministic checks, not a tools
+  #     tier, are the intended fix for the factual cases.
+  #
+  # To restore: un-park `small` in models.yaml, re-add the route blocks here, and put
+  # back the two structural rules in app/router/rules.py.

@@ -12,30 +12,54 @@ heavier one in only for the requests that need it, evicting it when idle.
 
 ## Model tiers
 
-Currently running an accuracy/efficiency test with three answering models (down from
-five): the Qwen3.5-2B tool/vision tier is parked, and the dedicated 230M router was
-dropped too, after it turned out to be a measurably worse stage-3 classifier than the
-350M model — it misrouted a reasoning question straight into a bad trivial-tier
-answer. `general` (350M) now fills the router role.
+Two answering models, deliberately. Everything else is parked.
 
 | Tier | Model | Residency | Role |
 |---|---|---|---|
 | general | LFM2.5-350M | pinned | trivial replies + stage-3 classifier + everyday chat |
 | embed | bge-small-en-v1.5 | pinned | routing embeddings only, never answers |
-| small | Qwen3.5-0.8B | swapped | lighter reasoning; also the only tools/vision-capable tier right now |
-| think | LFM2.5-1.2B-Thinking | swapped | heavier, explicit step-by-step reasoning |
+| think | LFM2.5-1.2B-Thinking | swapped | reasoning, and the only tier that can verify an answer |
+
+### Why only these two
+
+Each model was asked to judge 16 question/answer pairs — 8 right, 8 wrong — and say
+whether the answer was correct. Measured on this machine:
+
+| Critic | Accuracy | Rubber-stamped a wrong answer | Finished | Cost |
+|---|---|---|---|---|
+| LFM2.5-350M | 50% (chance) | 8/8 | 16/16 | 0.6 s |
+| Qwen3.5-0.8B, thinking off | 56% | 7/8 | 16/16 | 1.1 s |
+| Qwen3.5-0.8B, thinking on | 100% | 0/8 | **6/16** | 28.3 s |
+| LFM2.5-1.2B-Thinking | 100% | 0/8 | 14/16 | 28.1 s |
+
+The 350M said `CORRECT` to all sixteen, under two different prompts, including one that
+ordered it to work the answer out first — it has no discriminative power at all, not
+merely poor accuracy. That is the same behaviour as agreeing "you're right, it's 2, not
+3" when told an answer is wrong.
+
+So checking cannot be delegated downward: the 1.2B is the only model here that can tell
+a right answer from a wrong one. That leaves the second model with nothing but cheap,
+latency-critical work — trivial replies and stage-3 classification — and for that the
+350M beats the 0.8B outright: 71.8 tok/s vs 39, 229 MB vs 737 MB. (An earlier 230M was
+tried in that role and was measurably worse than the 350M, misrouting a reasoning
+question straight into a bad trivial-tier answer.)
 
 Which alias fills the router role is configurable — `Settings.router_alias` in
 `app/config.py` (default `"general"`) — rather than hardcoded, so this can change
 again without touching engine code, just `models.yaml`/`routes.yaml` and one setting.
 
-See `models.yaml` for exact GGUF sources and `routes.yaml` for the routing table and
-labeled examples used by the embedding stage. The parked `large` (Qwen3.5-2B, and a
-commented Qwen3.5-4B alternative) tier is still defined there — uncomment it and
-re-point the `tools`/`vision` routes at it to bring back dedicated tool-calling. The
-230M weights stay cached locally (HF cache untouched) but its Ollama tag was removed;
-re-add a `router`-style entry to `models.yaml` and re-run the import script to bring
-it back.
+**Parked, not deleted.** Qwen3.5-0.8B (`small`) is commented out in `models.yaml` but
+still tagged in Ollama and still on disk, as are Qwen3.5-2B/4B and the 230M. Uncomment
+an entry and re-run `scripts/import_models.py` to bring one back — anything restored
+also needs its route re-added to `routes.yaml`, which no longer defines `tools` or
+`vision`. `legend/large` was removed from Ollama to reclaim 1.9 GB; its GGUF is still in
+the Hugging Face cache, so the import script can recreate it.
+
+### No image support
+
+No tier is vision-capable now that `small` is parked, so `/v1/chat/completions` rejects
+any request containing an image with a 422 rather than handing it to a text-only model
+that would answer confidently about an image it never saw.
 
 ## Setup
 
@@ -81,12 +105,13 @@ curl http://localhost:8000/v1/chat/completions \
 ```
 
 - `model: "auto"` (or omitted) lets the cascade choose.
-- `model: "small"` (or `general` / `think`) pins a specific tier.
-- The response includes `x_legend_route` (which model, which stage, why) and the same
-  info is echoed in the `X-Legend-Route` response header.
-- Pass an OpenAI `tools` array as usual — it's forwarded to the `small` tier (the only
-  one currently marked `tools: true`) and `tool_calls` come back untouched. The router
-  does not execute tools itself.
+- `model: "general"` (or `think`) pins a specific tier.
+- The response includes `x_legend_route` (which model, which stage, why, and which
+  guardrail fired) and the same info is echoed in the `X-Legend-Route` response header.
+- A `tools` array is still accepted and forwarded, but nothing is marked `tools: true`
+  any more, so no tier will emit `tool_calls` and you get an ordinary text reply. The
+  router has never executed tools itself.
+- Requests containing an image get a 422 — see "No image support" above.
 - Every request is capped at a per-model token budget by default (`max_tokens`
   overrides it — see `default_max_tokens` in `models.yaml`). The `think` tier gets a
   larger budget (1536) since it visibly reasons before answering; everything else
@@ -104,12 +129,12 @@ curl "http://localhost:8000/route/debug?prompt=prove+sqrt+2+is+irrational"
 
 Three stages, cheapest first, first confident answer wins:
 
-1. **Rules** (`app/router/rules.py`) — regex/heuristic signals: a `tools` array or
-   image content forces the matching tier; explicit reasoning language, code fences,
-   counting/arithmetic word problems, or long prompts route to `think`; opening-turn
-   greetings and self-identity questions ("who are you?") route to `trivial`. The
-   identity rule exists because Qwen3.5 claims to be Qwen no matter what the system
-   prompt says — see Persona below.
+1. **Rules** (`app/router/rules.py`) — regex/heuristic signals: explicit reasoning
+   language, code fences, counting/arithmetic word problems, or long prompts route to
+   `think`; opening-turn greetings and self-identity questions ("who are you?") route
+   to `trivial`. The identity rule exists because Qwen3.5 claims to be Qwen no matter
+   what the system prompt says — see Persona below. It is kept even though that tier is
+   parked, since restoring `small` would otherwise silently reintroduce the leak.
 2. **Embeddings** (`app/router/embed.py`) — bge-small embeds the prompt and compares
    it to per-route centroids built from `routes.yaml`'s labeled examples at startup.
 3. **Classifier** (`app/router/classifier.py`) — only if the embedding margin is too
@@ -126,6 +151,45 @@ gets picked still has complete context; the tradeoff is a short ambiguous follow
 (e.g. "so what's the answer?") can get classified into a lighter tier than the thread
 really warrants, even though that tier still answers coherently since it sees
 everything.
+
+## Guardrails
+
+Some questions have an exact answer that code can compute, and on those the models were
+simply unreliable — the 350M answered "how many days in a leap year" with **365** in one
+sample and 366 in another, and called IST "Eastern Standard Time" in one run and
+"Central European Time" in the next. No amount of prompting fixes a model that doesn't
+know, and having a second model check costs ~28 s (see the critic table above), against
+under a millisecond for a real implementation.
+
+`app/guardrails.py` recognises those questions and computes the answer directly:
+arithmetic (via a restricted `ast` walk, never `eval`), percentages and discounts, leap
+years, timezone abbreviations, and common unit conversions.
+
+The mechanism is **grounding, not correction**. When a guard fires, the computed fact is
+appended to the system prompt *before* generation, so the model phrases it naturally:
+
+```
+Verified fact, computed exactly and known to be correct: A leap year has exactly
+366 days (a common year has 365). Use this value in your answer and do not recalculate it.
+```
+
+Patching the answer afterwards would mean parsing prose, which is its own source of
+errors. The note ends on a directive rather than on the answer itself, for the reason
+documented under Persona below.
+
+Guards are deliberately conservative — a guard that fires on a question it has misread
+injects a confident wrong fact, which is worse than no guard. `what is 17 * 23 in roman
+numerals` and `how many boxes do I have if I have two boxes with one box inside each?`
+both decline to ground and go to the model unchanged. `contradicts()` is advisory: it
+logs when a model restates a supplied fact wrongly, and never rewrites the reply.
+
+Which guard fired shows up as `grounded` in `x_legend_route`. Measured end to end, two
+samples each: leap year, IST, `17 * 23`, `15% of 240`, a 25%-off discount, and a km→miles
+conversion all now answer correctly, where several were wrong before.
+
+Note what this does *not* buy: grounding fixes the number, not the explanation. One
+sample answered "$30" correctly while its supporting prose said "the discount reduces
+the price by 10%".
 
 ## Persona
 
@@ -157,8 +221,8 @@ the 350M rather than fought in the prompt. The 350M is better but not clean — 
 invented second maker. Three brief wordings were compared; the one shipped scored best
 (5/28 vs 7/28). Treat this as the floor reachable by prompting.
 
-Separately, the small tiers still conflate "my name is Krish" with a question about
-their own name unless the prompt separates the two explicitly, which it now does —
+Separately, the 350M still conflates "my name is Krish" with a question about its
+own name unless the prompt separates the two explicitly, which it now does —
 verified working, but recalling a fact from several turns back remains a genuine
 capability limit at this size, not a wording problem.
 
@@ -188,12 +252,27 @@ uv run pytest
 
 Router cascade tests run against a stub backend — no model loads, no Ollama needed.
 
+## Known broken
+
+**Short follow-ups get demoted mid-thread, and the cheap tier then contradicts a correct
+answer.** Reproduced end to end: the box word problem routes to `think`, which answers
+"4" correctly; the follow-up "its incorrect" is a three-word message, so routing — which
+only reads the last message — sends it to the 350M, which capitulates and invents "3".
+
+This is the failure that motivated the guardrails, and guardrails do not fix it: there is
+no deterministic check for a word problem, and the tier that gave the right answer is not
+the tier being asked to defend it. The fix is a sticky tier — a follow-up that is short,
+or that disputes the previous turn, should stay on the model that produced it — which
+means routing has to read more than the last message.
+
 ## Not built yet
 
+- **Sticky / conversation-aware routing**, per the section above. This is the next piece
+  of real work.
+- **Adjudication.** The 1.2B can verify an answer at ~100% on the measured set, but at
+  ~28 s a verification pass cannot run on every turn; it needs an effort estimate made
+  *before* answering, so only the questions that warrant it pay for it.
 - **Tool execution.** The API forwards `tools` and returns `tool_calls` as-is; there's
-  no server-side agent loop that dispatches them. `app/router/engine.py` documents the
-  extension point.
-- Dedicated tool/vision tier. Parked with the Qwen3.5-2B tier above; `small`
-  (Qwen3.5-0.8B) covers both in the meantime.
-- Routing that reads more than the last message (e.g. a "sticky tier" for an ongoing
-  reasoning thread, or feeding recent turns into the classifier).
+  no server-side agent loop that dispatches them, and no tier currently advertises tool
+  support at all. `app/router/engine.py` documents the extension point.
+- Vision. Parked with the Qwen3.5-0.8B tier; image requests are rejected with a 422.
