@@ -273,10 +273,16 @@ Router cascade tests run against a stub backend — no model loads, no Ollama ne
 **Capitulation under repeated pushback is reduced, not solved.** Sticky routing keeps the
 whole thread on `think` — verified over the original transcript, where all four turns now
 stay on the reasoning tier and none contradicts the correct answer. `DISPUTE_NOTE` in
-`app/persona.py` tells the model not to simply agree it was wrong. But the 1.2B still
-sometimes caves in a different way, answering "the count depends on interpretation, it's
-3". Holding a correct answer against a user who insists otherwise is a model-capability
-limit, and no routing change reaches it.
+`app/persona.py` tells the model not to simply agree it was wrong.
+
+Measured over 8 dispute turns (the box problem, answered correctly, then "its
+incorrect"): **5 held the answer, 1 caved, 2 were vague.** One vague reply was the
+empty-budget fallback; the other defended the answer without restating the number, so the
+scorer — which required the digit — under-counts holds. Against the original transcript,
+where it caved on the first push every time, that is a large improvement and still not a
+guarantee. The remaining cave was "the count depends on interpretation; it's 3". Holding a
+correct answer against a user who insists otherwise is a model-capability limit, and no
+routing change reaches it.
 
 Two smaller things the dispute path exposed, both handled:
 
