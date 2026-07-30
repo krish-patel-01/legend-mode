@@ -296,11 +296,16 @@ Two smaller things the dispute path exposed, both handled:
 
 ## Not built yet
 
-- **Adjudication.** The 1.2B can verify an answer at ~100% on the measured set, but at
-  ~28 s a verification pass cannot run on every turn; it needs an effort estimate made
-  *before* answering, so only the questions that warrant it pay for it.
-- **An eval set.** Every number in this README came from a throwaway script. Anything
-  further needs fixed cases with known answers, or improvements can't be told from noise.
+See [ROADMAP.md](ROADMAP.md) for the full plan, the measured constraints behind it, and
+why RL post-training isn't viable on this hardware. In short:
+
+- **An eval set** — next, and a prerequisite for the rest. Every number in this README came
+  from a throwaway script; improvements can't be told from noise without fixed cases.
+- **Adjudication with an effort controller.** The 1.2B verifies at ~100% on the measured
+  set but costs ~28 s, so it needs a difficulty estimate made *before* answering. Per-effort
+  token budgets would also fix the ~1-in-6 dispute turns that currently exhaust the budget.
+- **Retrieval**, for the facts neither model knows — gated, not always-on.
+- Tool execution, vision, and RL on weights: all deferred, with reasons in the roadmap.
 - **Tool execution.** The API forwards `tools` and returns `tool_calls` as-is; there's
   no server-side agent loop that dispatches them, and no tier currently advertises tool
   support at all. `app/router/engine.py` documents the extension point.
