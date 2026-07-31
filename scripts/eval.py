@@ -236,6 +236,8 @@ def main() -> int:
     ap.add_argument("--routes-only", action="store_true",
                     help="check routing via /route/debug without generating")
     ap.add_argument("--samples", type=int, help="override every case's sample count")
+    ap.add_argument("--include-known-failing", action="store_true",
+                    help="also run cases marked known_failing (slow, and expected to fail)")
     ap.add_argument("--timeout", type=float, default=900.0)
     ap.add_argument("--save-baseline", action="store_true",
                     help="write the current scores to evals/baseline.json")
@@ -261,6 +263,12 @@ def main() -> int:
 
     for case in cases:
         cid, category = case["id"], case["category"]
+        # Cases pinned at a measured capability ceiling. They are worth keeping — if a
+        # later change ever solves one, that should be visible — but each costs minutes
+        # to fail, so a routine run skips them.
+        if case.get("known_failing") and not args.include_known_failing:
+            skipped.append(cid)
+            continue
         if args.routes_only:
             expect = case.get("expect") or {}
             if case.get("turns") or not ({"route", "not_route"} & set(expect)):
@@ -310,8 +318,8 @@ def main() -> int:
         print(f"grounded {grounded_total} sample(s), of which {corrected} needed "
               f"correction ({corrected / grounded_total:.0%})")
     if skipped:
-        print(f"\nskipped in --routes-only ({len(skipped)}: multi-turn, or no routing "
-              f"expectation to check): {', '.join(skipped)}")
+        print(f"\nskipped ({len(skipped)}: known-failing, or in --routes-only "
+              f"multi-turn / no routing expectation): {', '.join(skipped)}")
 
     # The diff is printed even when saving. A full run takes tens of minutes, so making
     # "see what changed" and "accept the change" mutually exclusive would mean running

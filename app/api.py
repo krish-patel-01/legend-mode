@@ -158,20 +158,27 @@ async def chat_completions(request: Request) -> Any:
         history.add(prompt=req.text, tag=spec.tag, decision=decision, error=str(exc))
         raise HTTPException(502, str(exc)) from exc
 
-    # A thinking model that spends its whole budget reasoning returns content="" with
-    # the answer never emitted. Empty output reads as a broken server, and sticky
-    # routing made it reachable by sending terse follow-ups to the reasoning tier —
-    # "nope" against a hard problem is exactly the shape that runs the budget out.
-    # Saying so is worse than a real answer but better than silence.
+    # A thinking model that spends its whole budget reasoning returns content="" with the
+    # answer never emitted. Empty output reads as a broken server, so something honest
+    # goes back instead.
+    #
+    # The wording matters, and an earlier version got it wrong. "I ran out of thinking
+    # room" implies a larger budget would help. Measured, it does not: at 4096 tokens the
+    # keyboard-substitution puzzle answered "S" after 215 s and the word-sequence puzzle
+    # answered "A" after 342 s, both wrong, where 1536 produced nothing in ~135 s. More
+    # budget bought a slower wrong answer. Meanwhile the box word problem finishes inside
+    # 935 tokens. So exhaustion here means the question is past this tier's ability, not
+    # that it was interrupted — and the reply should not invite a retry that will fail
+    # the same way.
     message = result.get("message") or {}
     if not (message.get("content") or "").strip() and not message.get("tool_calls"):
         log.warning(
-            "%s produced no content (%s tokens); returning a fallback",
+            "%s produced no content in %s tokens; likely past this tier's ability",
             spec.alias, result.get("eval_count"),
         )
         message["content"] = (
-            "I ran out of thinking room before I finished that one. "
-            "Ask me for a specific part of it and I'll work through that."
+            "I worked through that but couldn't reach an answer I'd trust, so I'd rather "
+            "say so than guess. A smaller piece of it is more likely to get somewhere."
         )
         result["message"] = message
 

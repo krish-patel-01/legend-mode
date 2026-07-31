@@ -325,6 +325,25 @@ guarantee. The remaining cave was "the count depends on interpretation; it's 3".
 correct answer against a user who insists otherwise is a model-capability limit, and no
 routing change reaches it.
 
+**Some questions are past both tiers, and routing cannot fix that.** Two puzzles from a
+live session — a hidden-number word sequence (stONE, ofTEN, caNINE, frEIGHT) and a QWERTY
+letter-shift substitution — used to reach the 350M through `fallback` and got instant
+nonsense. They now route to `think` correctly, and `think` cannot solve them either:
+
+| budget | word sequence | keyboard shift | box word problem |
+|---|---|---|---|
+| 1536 tokens | no answer, ~134 s | no answer, ~141 s | **"4." correct**, 658 tok |
+| 4096 tokens | **"A"** — wrong, 342 s | **"S"** — wrong, 215 s | "4." correct, 927 tok |
+
+More budget bought a *slower wrong answer*, so `default_max_tokens` stays at 1536. A
+brevity instruction was measured too: ignored outright on the hard puzzles, though it cut
+a solvable problem's tokens by 26% — a candidate for the effort controller, not a
+prompt change to make on one sample. Both puzzles are in the eval suite as
+`known_failing`, skipped by default and runnable with `--include-known-failing`.
+
+When the reasoning tier exhausts its budget it now says it couldn't reach an answer it
+trusts, rather than "I ran out of thinking room", which wrongly implied a retry would help.
+
 Two smaller things the dispute path exposed, both handled:
 
 - Terse disputes gave the 1.2B nothing concrete to re-check, and it reasoned in circles

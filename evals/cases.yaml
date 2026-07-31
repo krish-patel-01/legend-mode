@@ -171,6 +171,34 @@ cases:
     expect:
       route: think
 
+  # The two cases above assert routing, which now works. These assert the *answers*, and
+  # both fail: they mark a measured capability ceiling rather than a bug to chase.
+  #
+  # Measured on the 1.2B: at a 1536-token budget neither produced any answer (~135 s of
+  # reasoning, then nothing). At 4096 the keyboard puzzle answered "S" after 215 s and the
+  # sequence puzzle "A" after 342 s — both wrong. More budget bought a slower wrong
+  # answer, so the budget stays where it is. A brevity instruction was tried too and was
+  # ignored outright on these, though it did cut a solvable problem's tokens by 26%.
+  #
+  # `known_failing` keeps them out of routine runs, since each costs minutes to fail.
+  # Run them with --include-known-failing when something might plausibly have moved.
+
+  - id: sequence-puzzle-answer
+    category: reasoning
+    known_failing: true
+    prompt: "Which word comes next: Stone, Often, Canine, _: A Helpful B Freight C Glow D Grape"
+    note: "Each word hides a number: stONE, ofTEN, caNINE, frEIGHT. Answer: Freight (B)."
+    expect:
+      any_of: ["freight", " b", "(b)"]
+
+  - id: keyboard-puzzle-answer
+    category: reasoning
+    known_failing: true
+    prompt: "Given a QWERTY keyboard layout, if HEART goes to JRSTY, what does AFTER go to?"
+    note: "Each letter shifts one key right: A->S, F->G, T->Y, E->R, R->T. Answer: SGYRT."
+    expect:
+      contains: ["sgyrt"]
+
   - id: puzzle-rule-does-not-eat-ordinary-questions
     category: cheap
     prompt: "what's wrong with this sentence"
