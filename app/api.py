@@ -175,17 +175,25 @@ async def chat_completions(request: Request) -> Any:
         )
         result["message"] = message
 
-    # A model that restates a supplied fact incorrectly is worth knowing about: it
-    # means grounding alone isn't enough for this tier and the case needs the
-    # adjudication path. Advisory only — the answer is not rewritten here.
+    # Injecting a computed fact into the system prompt is not enough on its own. Measured
+    # over 6 samples per case, the 350M overrode the supplied value on 5 of 6 discount
+    # questions ("You pay $20", "You pay $15" against a grounded 30) and 5 of 6
+    # temperature conversions ("100 / 32 = 3.125"). An earlier 2-sample check missed this
+    # entirely, which is precisely why evals/ exists.
+    #
+    # So a contradicted numeric grounding is corrected rather than merely logged.
+    # `contradicts()` only fires on numeric values it can compare exactly, so this
+    # replaces a provably wrong number with a provably right one — it is not prose
+    # judging prose. The claim text is already written as a complete sentence.
     if grounding is not None:
         answered = (result.get("message") or {}).get("content") or ""
         if guardrails.contradicts(answered, grounding):
             log.warning(
-                "%s ignored a %s grounding (%r) in its answer",
-                spec.alias, grounding.kind, grounding.value,
+                "%s contradicted a %s grounding (wanted %r, said %r); substituting",
+                spec.alias, grounding.kind, grounding.value, answered[:80],
             )
-            decision.grounded = f"{grounding.kind} (contradicted)"
+            result["message"] = {**(result.get("message") or {}), "content": grounding.claim}
+            decision.grounded = f"{grounding.kind} (corrected)"
 
     history.add(
         prompt=req.text, tag=spec.tag, decision=decision,

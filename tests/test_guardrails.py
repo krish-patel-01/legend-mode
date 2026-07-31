@@ -146,6 +146,35 @@ def test_contradicts_is_silent_when_there_is_no_number_to_compare():
     assert contradicts("I'm not sure about that.", g) is False
 
 
+def test_contradicts_drives_a_safe_substitution():
+    # The correction path in app/api.py replaces the reply with `claim` when a numeric
+    # grounding is contradicted. That is only sound because contradicts() compares
+    # numbers exactly and claim is a complete sentence — assert both properties here so
+    # a future edit to either can't quietly make the substitution unsafe.
+    g = ground("if a shirt is 40 dollars with 25% off, what do I pay in the end")
+    assert g is not None
+    assert contradicts("You pay $20.", g) is True
+    assert g.claim.endswith(".") and g.value in g.claim
+    assert contradicts(g.claim, g) is False  # the substituted text must satisfy its own check
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "what is 17 * 23?",
+        "convert 100 c to f",
+        "convert 10 km to miles",
+        "how many days in a leap year",
+        "how much is 15 percent of 240",
+    ],
+)
+def test_every_numeric_claim_passes_its_own_contradiction_check(text):
+    # If a claim tripped its own checker the correction path would loop-flag forever.
+    g = ground(text)
+    assert g is not None
+    assert contradicts(g.claim, g) is False
+
+
 def test_contradicts_skips_prose_groundings():
     # Timezone claims are prose; matching prose against prose is the unreliable step
     # this module exists to avoid, so it must not report a contradiction either way.

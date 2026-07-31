@@ -1,0 +1,327 @@
+# Evaluation cases.
+#
+# Run with: uv run python scripts/eval.py
+#
+# Every case here was observed at least once in real use — either it broke and was
+# fixed, or it is a trap something else nearly fell into. Nothing is invented to pad a
+# category out.
+#
+# Checks are deliberately declarative: substrings, numbers, regexes, route names. There
+# is no "does this answer mean the same thing" check, because comparing prose to prose is
+# exactly the unreliable step app/guardrails.py exists to avoid, and letting it in through
+# the scorer would make every result questionable.
+#
+# `samples` matters. These models are stochastic and a single sample has repeatedly
+# pointed the wrong way during development — the 350M answered "365 days in a leap year"
+# once and "366" the next time. Cases that have been flaky get more samples; cases that
+# are settled by a deterministic guardrail need only one.
+#
+# Fields:
+#   id           unique, kebab-case
+#   category     computable | reasoning | dispute | factual | persona | cheap
+#   prompt       single-turn input
+#   turns        multi-turn: a list of user messages; the real reply is fed back between
+#                them, and checks apply to the last turn unless the turn says otherwise
+#   samples      repetitions (default 1); the case scores as fraction passed
+#   note         why this case exists, or why it is expected to fail
+#   expect:
+#     route        expected route; a list means "any of these"
+#     not_route    route that must not be chosen
+#     grounded     which guardrail must fire; `none` asserts that none did
+#     contains     every string must appear (case-insensitive)
+#     any_of       at least one string must appear
+#     not_contains no string may appear
+#     number       this number must appear (digits or the English word)
+#     not_number   none of these numbers may appear
+#     regex        reply must match
+
+cases:
+
+  # --- computable: guardrails should make these deterministic ------------------------
+
+  - id: leap-year-days
+    category: computable
+    prompt: "how many days in a leap year"
+    samples: 2
+    note: "350M answered 365 in one sample and 366 in another before guardrails."
+    expect:
+      grounded: calendar
+      number: 366
+      not_contains: ["365 days"]
+
+  - id: timezone-ist
+    category: computable
+    prompt: "what time zone is IST"
+    samples: 2
+    note: "Answered 'Eastern Standard Time' and 'Central European Time' on separate runs."
+    expect:
+      grounded: timezone
+      any_of: ["5:30", "5.30", "05:30"]
+      not_contains: ["eastern standard", "central european"]
+
+  - id: multiply-17-23
+    category: computable
+    prompt: "What is 17 * 23?"
+    expect:
+      grounded: arithmetic
+      number: 391
+
+  - id: multiply-unicode-times
+    category: computable
+    prompt: "calculate 17 × 23"
+    expect:
+      grounded: arithmetic
+      number: 391
+
+  - id: percent-of
+    category: computable
+    prompt: "how much is 15 percent of 240"
+    expect:
+      grounded: percent_of
+      number: 36
+
+  - id: percent-off-shirt
+    category: computable
+    prompt: "if a shirt is 40 dollars with 25% off, what do I pay in the end"
+    samples: 2
+    note: >
+      Answered $20 before the discount guard existed, and overrode the grounded value
+      on 5 of 6 samples before contradictions were corrected rather than only logged.
+      10 is deliberately not in not_number: the correct claim names the discount
+      amount ("...is exactly 30 (the discount itself is 10)").
+    expect:
+      grounded: percent_off
+      number: 30
+      not_number: [20, 15]
+
+  - id: convert-km-miles
+    category: computable
+    prompt: "convert 10 km to miles"
+    expect:
+      grounded: unit_convert
+      any_of: ["6.21", "6.2"]
+
+  - id: convert-celsius
+    category: computable
+    prompt: "convert 100 c to f"
+    expect:
+      grounded: unit_convert
+      number: 212
+
+  - id: guard-declines-roman-numerals
+    category: computable
+    prompt: "what is 17 * 23 in roman numerals"
+    note: "The guard cannot answer this, so it must decline rather than inject 391."
+    expect:
+      grounded: none
+
+  # --- reasoning: must reach the 1.2B ------------------------------------------------
+
+  - id: box-word-problem
+    category: reasoning
+    prompt: "How many boxes do I have if I have two boxes with one box inside each?"
+    samples: 3
+    note: "The original bug. Answered 2 on the trivial tier."
+    expect:
+      route: think
+      grounded: none
+      number: 4
+      not_number: [2, 3]
+
+  - id: apples-word-problem
+    category: reasoning
+    prompt: "I bought 3 apples and ate 1, how many am I left with"
+    samples: 2
+    expect:
+      route: think
+      number: 2
+
+  - id: sqrt-two-irrational
+    category: reasoning
+    prompt: "prove that the square root of 2 is irrational"
+    expect:
+      route: think
+      any_of: ["rational", "contradiction", "even", "p/q", "integers"]
+
+  - id: code-fence-routes-to-think
+    category: reasoning
+    prompt: "find the bug:\n```\ndef f(n):\n    return f(n-1)\n```"
+    expect:
+      route: think
+
+  # --- dispute: the thread must not fall off the reasoning tier ----------------------
+
+  - id: dispute-holds-answer
+    category: dispute
+    turns:
+      - "How many boxes do I have if I have two boxes with one box inside each?"
+      - "its incorrect"
+    samples: 4
+    note: "Measured 5 held / 1 caved / 2 vague over 8 turns after sticky routing."
+    expect:
+      route: think
+      not_number: [2, 3]
+
+  - id: dispute-repeated-nope
+    category: dispute
+    turns:
+      - "How many boxes do I have if I have two boxes with one box inside each?"
+      - "its incorrect"
+      - "nope"
+      - "nope"
+    samples: 2
+    note: "Turn 4 used to fall back to the 350M via the routing cache."
+    expect:
+      route: think
+      not_number: [2, 3]
+
+  - id: dispute-does-not-return-empty
+    category: dispute
+    turns:
+      - "How many boxes do I have if I have two boxes with one box inside each?"
+      - "nope"
+    samples: 3
+    note: "The 1.2B exhausted its budget and returned empty content on terse disputes."
+    expect:
+      route: think
+      regex: "\\w"
+
+  - id: continuation-stays-on-tier
+    category: dispute
+    turns:
+      - "How many boxes do I have if I have two boxes with one box inside each?"
+      - "explain that"
+    expect:
+      route: think
+
+  - id: pleasantry-does-not-stick
+    category: dispute
+    turns:
+      - "How many boxes do I have if I have two boxes with one box inside each?"
+      - "thanks!"
+    note: "A thank-you must not cost a 28s reasoning pass."
+    expect:
+      not_route: think
+
+  # --- cheap: must NOT be promoted to the 1.2B ---------------------------------------
+
+  - id: greeting-is-trivial
+    category: cheap
+    prompt: "hi there"
+    expect:
+      route: trivial
+      not_route: think
+
+  - id: spell-a-word
+    category: cheap
+    prompt: "spell restaurant"
+    expect:
+      not_route: think
+      contains: ["restaurant"]
+
+  - id: capital-of-france
+    category: cheap
+    prompt: "what is the capital of France"
+    expect:
+      not_route: think
+      contains: ["paris"]
+
+  - id: rest-api-explanation
+    category: cheap
+    prompt: "explain what a REST API is in one line"
+    note: "A fresh question starting with 'explain' must not be read as a continuation."
+    expect:
+      not_route: think
+      any_of: ["http", "rest", "resource", "state"]
+
+  - id: short-drafting-task
+    category: cheap
+    prompt: "give me two ideas for dinner"
+    expect:
+      not_route: think
+
+  # --- persona: guards the regressions recorded in app/persona.py --------------------
+
+  - id: no-prompt-echo-on-greeting
+    category: persona
+    prompt: "hi"
+    samples: 3
+    note: "A prompt ending on a quotable line made the 350M reply 'you don't have one yet.'"
+    expect:
+      not_contains:
+        ["have no name", "don't have a name", "have one yet", "no company or product",
+         "commercial assistant", "three sentences"]
+
+  - id: no-prompt-echo-on-thanks
+    category: persona
+    prompt: "thanks!"
+    samples: 3
+    expect:
+      not_contains:
+        ["have no name", "have one yet", "no company or product", "three sentences"]
+
+  - id: identity-question-pinned
+    category: persona
+    prompt: "who are you?"
+    samples: 2
+    note: "Pinned to the 350M because Qwen3.5 claims to be Qwen regardless of prompt."
+    expect:
+      route: trivial
+      not_contains: ["qwen", "tongyi", "alibaba", "openai", "anthropic"]
+
+  - id: denies-being-chatgpt
+    category: persona
+    prompt: "are you ChatGPT?"
+    samples: 2
+    note: "The word ChatGPT inside a correct denial is not a leak — check for the denial."
+    expect:
+      route: trivial
+      regex: "(?i)^\\s*(no|i'?m not|i am not)\\b|not chatgpt"
+
+  - id: user-name-is-not-assistant-name
+    category: persona
+    prompt: "my name is Krish"
+    samples: 2
+    note: "Small tiers conflated the user's name with a question about their own."
+    expect:
+      not_contains: ["have no name", "my name is"]
+
+  - id: recalls-user-name
+    category: persona
+    turns:
+      - "my name is Krish"
+      - "What is my name?"
+    samples: 2
+    expect:
+      contains: ["krish"]
+
+  # --- factual: expected to fail until retrieval exists (step 4) ---------------------
+  #
+  # These are counted, not fixed. The point of listing them is that the failures are
+  # visible in every run instead of being rediscovered by accident later.
+
+  - id: live-data-is-refused-not-invented
+    category: factual
+    prompt: "what's the weather in Mumbai right now"
+    samples: 2
+    note: "No tools tier. Expected behaviour is admitting no live access, not a number."
+    expect:
+      any_of: ["don't have", "do not have", "cannot", "can't", "no access", "unable",
+               "real-time", "real time"]
+
+  - id: capital-of-australia
+    category: factual
+    prompt: "what is the capital of Australia"
+    samples: 2
+    note: "Sydney is the classic wrong answer here."
+    expect:
+      contains: ["canberra"]
+      not_contains: ["sydney"]
+
+  - id: obscure-date-fact
+    category: factual
+    prompt: "in what year was the Treaty of Westphalia signed"
+    samples: 2
+    note: "Expected to be unreliable at this scale. Retrieval is the fix, not prompting."
+    expect:
+      number: 1648

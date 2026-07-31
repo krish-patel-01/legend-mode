@@ -196,15 +196,26 @@ documented under Persona below.
 Guards are deliberately conservative — a guard that fires on a question it has misread
 injects a confident wrong fact, which is worse than no guard. `what is 17 * 23 in roman
 numerals` and `how many boxes do I have if I have two boxes with one box inside each?`
-both decline to ground and go to the model unchanged. `contradicts()` is advisory: it
-logs when a model restates a supplied fact wrongly, and never rewrites the reply.
+both decline to ground and go to the model unchanged.
 
-Which guard fired shows up as `grounded` in `x_legend_route`. Measured end to end, two
-samples each: leap year, IST, `17 * 23`, `15% of 240`, a 25%-off discount, and a km→miles
-conversion all now answer correctly, where several were wrong before.
+**Injection alone is not enough, and this took an eval suite to notice.** A two-sample
+check said the guarded cases all answered correctly. At six samples the 350M was
+overriding the supplied value on 5 of 6 discount questions ("You pay $20" against a
+grounded 30) and 5 of 6 temperature conversions ("100 ÷ 32 = 3.125" against 212). So
+`contradicts()` no longer just logs: when a **numeric** grounding is contradicted, the
+reply is replaced with the guard's own sentence. That is sound precisely because the
+comparison is numeric and exact — a provably wrong number swapped for a provably right
+one, never prose judging prose.
 
-Note what this does *not* buy: grounding fixes the number, not the explanation. One
-sample answered "$30" correctly while its supporting prose said "the discount reduces
+Measured over 54 samples after the change, the `computable` category passes 100%, and
+**19% of grounded samples needed correcting** — that rate is reported by the eval runner
+and is a direct measure of how often the answering tier ignores a value it was handed.
+
+Which guard fired shows up as `grounded` in `x_legend_route`, suffixed `(corrected)` when
+the substitution ran.
+
+Note what this does *not* buy: grounding fixes the number, not the reasoning around it.
+One sample answered "$30" correctly while its supporting prose said "the discount reduces
 the price by 10%".
 
 ## Persona
@@ -267,6 +278,36 @@ uv run pytest
 ```
 
 Router cascade tests run against a stub backend — no model loads, no Ollama needed.
+
+## Evals
+
+Unit tests prove the routing logic; they say nothing about whether the answers are
+right. That needs real generation, so it lives separately in `evals/cases.yaml` and
+`scripts/eval.py`, run against a server that's already up:
+
+```
+uv run python scripts/eval.py                     # everything
+uv run python scripts/eval.py --category dispute  # one category
+uv run python scripts/eval.py --routes-only       # routing only, ~1 ms a case
+uv run python scripts/eval.py --save-baseline     # accept the current numbers
+```
+
+Cases are grouped as `computable`, `reasoning`, `dispute`, `factual`, `persona` and
+`cheap` (the last asserting that lookups are *not* promoted to the 1.2B, which protects
+latency). Every case came from something observed in real use.
+
+Two properties worth preserving if you extend it:
+
+- **Checks are declarative** — substrings, numbers, regexes, route names. There is no
+  model-judges-the-answer step, because a model judging output is the thing this project
+  measured as unreliable (the 350M rubber-stamped 8 of 8 wrong answers).
+- **Cases are sampled, not run once.** A case scores as the fraction of samples that
+  passed, so flakiness reads as 50% rather than as a coin-flip pass. This is not
+  theoretical: a 2-sample check reported the discount and temperature guards as working,
+  and at 6 samples they were passing 1 in 6.
+
+`evals/baseline.json` holds the last accepted run; a normal run diffs against it and
+exits non-zero on any regression.
 
 ## Known limitations
 

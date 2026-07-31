@@ -43,13 +43,19 @@ Three consequences that constrain every step below:
 
 ---
 
-## Step 2 — An evaluation harness
+## Step 2 — An evaluation harness — **DONE**
 
-**Do this before step 3.** Every number in `README.md` came from a throwaway script in a
-temp directory that no longer exists. That was fine for one-off diagnosis and is a bad
-foundation: there is now enough measured behaviour recorded that re-verifying it by hand
-is not sustainable, and step 3 cannot be tuned without a way to tell improvement from
-noise.
+Built as `evals/cases.yaml`, `scripts/eval.py` and `evals/baseline.json`. See the Evals
+section of `README.md` for usage.
+
+It justified itself on the first full run by falsifying a claim this file's earlier
+version treated as settled: a two-sample check had reported the guardrail cases as all
+passing, and at six samples the 350M was overriding the injected value on 5 of 6 discount
+questions and 5 of 6 temperature conversions. That led to contradicted numeric groundings
+being corrected rather than merely logged. **19% of grounded samples still need
+correcting**, which is now a reported metric rather than an unknown.
+
+The rest of this section is the original design, kept because it explains the choices.
 
 **Shape.** A case file plus a runner:
 
