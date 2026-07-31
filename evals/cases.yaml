@@ -149,6 +149,35 @@ cases:
     expect:
       route: think
 
+  - id: sequence-puzzle
+    category: reasoning
+    prompt: "Which word comes next: Stone, Often, Canine, _: A Helpful B Freight C Glow D Grape"
+    samples: 2
+    note: >
+      Found in live testing. Reached the 350M via `fallback` — no reasoning keyword, no
+      quantity, no code fence, and nothing close in the embedding bank. The answer is
+      Freight: each word hides a number (stONE, ofTEN, caNINE, freEIGHT).
+    expect:
+      route: think
+
+  - id: keyboard-transformation-puzzle
+    category: reasoning
+    prompt: "Given a QWERTY keyboard layout, if HEART goes to JRSTY, what does AFTER go to?"
+    samples: 2
+    note: >
+      Also from live testing, where it answered "AFTER goes to G". Each letter shifts one
+      key right, so the answer is SGYRT. Routing is what this case asserts; whether the
+      1.2B actually solves it is a separate question.
+    expect:
+      route: think
+
+  - id: puzzle-rule-does-not-eat-ordinary-questions
+    category: cheap
+    prompt: "what's wrong with this sentence"
+    note: "'wrong' here is about the user's text, not a dispute of the previous answer."
+    expect:
+      not_route: think
+
   # --- dispute: the thread must not fall off the reasoning tier ----------------------
 
   - id: dispute-holds-answer
@@ -191,6 +220,28 @@ cases:
     turns:
       - "How many boxes do I have if I have two boxes with one box inside each?"
       - "explain that"
+    expect:
+      route: think
+
+  - id: dispute-phrased-as-a-sentence
+    category: dispute
+    turns:
+      - "How many boxes do I have if I have two boxes with one box inside each?"
+      - "No the answer is wrong"
+    samples: 2
+    note: >
+      Found in live testing. The dispute pattern was anchored to the start of the
+      message, so this matched nothing and the 350M replied "The answer is correct."
+    expect:
+      route: think
+      not_number: [2, 3]
+
+  - id: bare-confusion-is-a-continuation
+    category: dispute
+    turns:
+      - "How many boxes do I have if I have two boxes with one box inside each?"
+      - "What?"
+    note: "Used to route to the trivial tier, which just repeated the bare answer."
     expect:
       route: think
 

@@ -77,6 +77,15 @@ routes:
       - "I bought 3 apples and ate 1, what am I left with"
       - "a box holds 4 smaller boxes, and I have two of those — count them all"
       - "if a shirt is 40 dollars with 25% off, what do I pay in the end"
+      # Puzzles. Both of these shapes reached the 350M via `fallback` in real use: no
+      # reasoning keyword, no quantities, and nothing close in the bank until now.
+      - "which word comes next: Stone, Often, Canine, _"
+      - "what letter comes next in this series"
+      - "if HEART goes to JRSTY on a QWERTY keyboard, what does AFTER go to"
+      - "using the same substitution, what does this word become"
+      - "find the odd one out and say why"
+      - "which of these options is correct and why"
+      - "solve this riddle"
 
   # `tools` and `vision` used to live here, both served by the Qwen3.5-0.8B `small`
   # tier. Both are gone with that tier (see models.yaml): image support isn't wanted

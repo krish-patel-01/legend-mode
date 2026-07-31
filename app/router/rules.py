@@ -79,11 +79,27 @@ _QUANTITY = re.compile(
 # before it, so it escalates to the reasoning tier outright. A bare "no" is not — it is
 # just as likely to be answering a question the assistant asked — so it only counts as a
 # dispute when the previous turn was already on a tier worth staying on.
+#
+# Anchoring these to the start of the message was too strict. "No the answer is wrong"
+# matched nothing — not the strong pattern, which wanted the dispute word first, and not
+# the weak one, which wanted the message to be *only* "no" — so the router sent it to the
+# 350M, which replied "The answer is correct." The dispute phrase has to be findable
+# anywhere in a short message.
+#
+# The trap that anchoring was avoiding is "what's wrong with this code", where "wrong"
+# is about the user's problem, not the assistant's answer. What separates them is the
+# subject: a dispute says *that / it / you / the answer* is wrong. So the phrase is
+# matched against those subjects, plus a set of bare and idiomatic forms.
+_WRONG = r"(?:wrong|incorrect|false|mistaken|not\s+(?:right|correct|true))"
 _DISPUTE_STRONG = re.compile(
-    r"^\s*(that'?s |it'?s |thats |this is )?(not (right|correct|true)|wrong|incorrect"
-    r"|mistaken|false)\b"
-    r"|^\s*(are you sure|you'?re wrong|check (it |that |again)|check again|recheck"
-    r"|re-check|try again|that'?s not (it|right)|doesn'?t (look|seem) right)\b",
+    # "that's wrong", "the answer is incorrect", "you're wrong", "its incorrect"
+    rf"\b(?:that|this|it|you|answer|result|response)(?:'?s|'?re|\s+is|\s+are)?"
+    rf"\s+(?:still\s+)?{_WRONG}\b"
+    # bare, or behind a light prefix: "wrong", "no, wrong", "sorry, incorrect"
+    rf"|^\s*(?:no+|nope|nah|sorry|hmm)?[\s,.!]*{_WRONG}\b"
+    # explicit challenges
+    r"|\bare you sure\b|\bthat'?s not (?:it|right)\b|\bdoesn'?t (?:look|seem) right\b"
+    r"|\b(?:check|try) (?:it |that )?again\b|\bre-?check\b",
     re.IGNORECASE,
 )
 _DISPUTE_WEAK = re.compile(r"^\s*(no+|nope|nah|uh-?uh)[\s.!?]*$", re.IGNORECASE)
@@ -99,7 +115,11 @@ _CONTINUATION = re.compile(
     r"|go on|continue|keep going|say more|expand( on (that|this|it))?"
     r"|(show|walk) (me )?(your work|the steps?|through (it|that))"
     r"|show your work|prove it|break it down|(in )?more detail"
-    r"|what about (that|this|it)|are you certain)"
+    r"|what about (that|this|it)|are you certain"
+    # Bare confusion. "What?" after a one-letter answer is asking the previous turn to
+    # try again, and sending it to the trivial tier just produces the same letter back.
+    r"|what|huh|sorry|come again|i don'?t (understand|get it)"
+    r"|that (doesn'?t|does not) make sense)"
     r"[\s.,!?]*$",
     re.IGNORECASE,
 )
@@ -123,6 +143,40 @@ def followup_kind(text: str) -> str | None:
         return "continuation"
     return None
 
+
+# --- puzzles -----------------------------------------------------------------
+#
+# Two real questions fell through every stage to the default route and were answered by
+# the 350M: "Which word comes next: Stone, Often, Canine, _" and "if HEART goes to JRSTY,
+# what does AFTER go to?". Both are pure reasoning, and neither contains any of the cues
+# above — no "prove", no "step by step", no quantities, no code fence. The embedding
+# stage had nothing close in routes.yaml either, so they landed on `fallback`.
+#
+# Sequence, transformation and multiple-choice shapes are all strong reasoning signals
+# on their own, independent of vocabulary.
+_SEQUENCE = re.compile(
+    r"\b(?:which|what)\s+(?:word|number|letter|term|item|one)?\s*comes\s+next\b"
+    r"|\bwhat\s+comes\s+next\b"
+    r"|\bnext\s+in\s+the\s+(?:sequence|series|pattern)\b"
+    r"|\bcomplete\s+the\s+(?:sequence|series|pattern|analogy)\b"
+    r"|\bodd\s+one\s+out\b|\briddle\b",
+    re.IGNORECASE,
+)
+
+# "if HEART goes to JRSTY, what does AFTER go to" — a stated mapping, then the same
+# mapping asked about a new input.
+_TRANSFORMATION = re.compile(
+    r"\bif\s+\S+\s+(?:goes?\s+to|maps?\s+to|becomes?|turns?\s+into|->|→)\s+\S+"
+    r".{0,80}?\bwhat\s+(?:does|would|is)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# A lettered option list. Deliberately case-sensitive: uppercase "A ... B ... C" is an
+# answer key, while lowercase "a ... b ... c" is ordinary prose and would match constantly.
+_MULTIPLE_CHOICE = re.compile(
+    r"\bA[).:]?\s+\w+.{0,60}?\bB[).:]?\s+\w+.{0,60}?\bC[).:]?\s+\w+",
+    re.DOTALL,
+)
 
 _CODE_FENCE = re.compile(r"```")
 
@@ -168,6 +222,14 @@ def apply(req: RouteRequest) -> RouteDecision | None:
     if _THINK_PATTERNS.search(text):
         return RouteDecision(
             route="think", stage="rules", reason="explicit reasoning cue in prompt"
+        )
+
+    if _SEQUENCE.search(text) or _TRANSFORMATION.search(text) or _MULTIPLE_CHOICE.search(text):
+        return RouteDecision(
+            route="think",
+            stage="rules",
+            reason="sequence, transformation or multiple-choice puzzle",
+            confidence=0.8,
         )
 
     if _QUANTITY_Q.search(text) and (

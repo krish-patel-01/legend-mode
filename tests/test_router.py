@@ -179,6 +179,48 @@ async def test_plain_quantity_lookup_is_not_a_word_problem(engine):
     assert decision.route != "think"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Which word comes next: Stone, Often, Canine, _: A Helpful B Freight C Glow D Grape",
+        "Given a QWERTY keyboard layout, if HEART goes to JRSTY, what does AFTER go to?",
+        "what comes next in this series",
+        "find the odd one out",
+        "which of these is right? A cat B dog C fish",
+    ],
+)
+async def test_puzzles_route_to_think(engine, text):
+    # Both of the first two reached the 350M via `fallback` in live testing and got
+    # nonsense back ("AFTER goes to G"). Neither contains a reasoning keyword, a
+    # quantity, or a code fence, so nothing in stage 1 saw them.
+    decision = await engine.route(RouteRequest(text=text, message_count=1))
+    assert decision.route == "think"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "what's wrong with this code",         # "wrong" about the user's problem
+        "explain what a REST API is",
+        "a quick question about b trees and c",  # lowercase letters are ordinary prose
+        "what is the capital of France",
+    ],
+)
+async def test_puzzle_and_dispute_rules_do_not_overmatch(engine, text):
+    decision = await engine.route(RouteRequest(text=text, message_count=1))
+    assert decision.stage != "sticky"
+    assert not (decision.stage == "rules" and decision.route == "think")
+
+
+async def test_bare_confusion_is_a_continuation(engine):
+    # "What?" after a one-letter answer means "try that again", not a new question.
+    decision = await engine.route(
+        RouteRequest(text="What?", message_count=4, anchor_text=_BOX)
+    )
+    assert decision.route == "think"
+    assert decision.stage == "sticky"
+
+
 async def test_live_data_phrase_still_routes_somewhere_valid(engine):
     # Used to assert route == "tools". With no tools tier there is nothing correct to
     # assert beyond "it resolves"; the model will explain it has no live data access.
@@ -195,7 +237,22 @@ _BOX = "How many boxes do I have if I have two boxes with one box inside each?"
 
 
 @pytest.mark.parametrize(
-    "text", ["its incorrect", "that's wrong", "thats not right", "are you sure", "wrong"]
+    "text",
+    [
+        "its incorrect",
+        "that's wrong",
+        "thats not right",
+        "are you sure",
+        "wrong",
+        # Found in live testing: anchoring the pattern to the start of the message meant
+        # this matched nothing at all and the 350M answered "The answer is correct."
+        "No the answer is wrong",
+        "no, that's incorrect",
+        "the answer is wrong",
+        "you're wrong",
+        "sorry, incorrect",
+        "that result is false",
+    ],
 )
 async def test_dispute_escalates_even_without_history(engine, text):
     # The transcript that started this: `think` answered the box problem correctly,
