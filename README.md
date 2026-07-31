@@ -112,12 +112,14 @@ curl http://localhost:8000/v1/chat/completions \
   any more, so no tier will emit `tool_calls` and you get an ordinary text reply. The
   router has never executed tools itself.
 - Requests containing an image get a 422 — see "No image support" above.
-- Every request is capped at a per-model token budget by default (`max_tokens`
-  overrides it — see `default_max_tokens` in `models.yaml`). The `think` tier gets a
-  larger budget (1536) since it visibly reasons before answering; everything else
-  gets 512. Every Qwen3.5 GGUF tried so far defaults to thinking mode ON and will
-  burn its whole budget on a `<think>` block and return empty content if that isn't
-  turned off — `models.yaml` sets `default_think: false` on every Qwen3.5 tier.
+- `effort: "fast" | "standard" | "careful"` overrides the automatic estimate for one
+  request; `"auto"` or omitted lets the controller decide. See "Effort" below.
+- Token budgets come from the effort plan, not straight from the model. Each tier's
+  `default_max_tokens` in `models.yaml` is the ceiling the plan works within (1536 on
+  `think`, 512 elsewhere), and a caller's explicit `max_tokens` overrides both. Every
+  Qwen3.5 GGUF tried so far defaults to thinking mode ON and will burn its whole budget
+  on a `<think>` block and return empty content if that isn't turned off —
+  `models.yaml` sets `default_think: false` on every Qwen3.5 tier.
 
 Inspect a routing decision without generating anything:
 
@@ -225,6 +227,151 @@ Note what this does *not* buy: grounding fixes the number, not the reasoning aro
 One sample answered "$30" correctly while its supporting prose said "the discount reduces
 the price by 10%".
 
+## Effort
+
+`app/effort.py` decides how much a request is worth spending **before** answering it,
+from signals the cascade already produced — which rule fired, which stage decided,
+whether a guardrail grounded the question, whether this is a follow-up. No extra model
+call, so the estimate is free and can be wrong without costing anything.
+
+| Level | Budget | What it means |
+|---|---|---|
+| `fast` | 256 | greetings, identity questions, anything a guardrail already computed |
+| `standard` | the tier's own ceiling | ordinary chat and reasoning |
+| `careful` | tuned per follow-up kind | disputes, corrections, prompts nothing recognised |
+
+**The budgets are the part that fixed a live bug.** Before this, every request got its
+tier's fixed budget — 1536 tokens on the reasoning tier. A bare "nope" therefore reached
+a thinking model with 1536 tokens and nothing concrete to think about, and roughly 1 turn
+in 6 burned the lot and returned empty content. A contentless denial does not need 1536
+tokens; it needs one sentence asking what the user thinks is wrong. Follow-ups now get
+384 (bare denial), 768 (stated dispute or continuation) or 1024 (correction, which
+re-works the whole problem with the new fact included).
+
+Uncertainty is read off the routing **stage**, not off `confidence`. The confidences are
+not on a common scale — the embedding stage reports a raw cosine, the classifier a flat
+constant, the fallback 0.3 — so one threshold across all three would mostly measure which
+stage answered. `fallback` and `classifier` mean nothing recognised the prompt; that is
+the honest uncertainty signal, and `RouteDecision.origin` carries it through the routing
+cache so a cached guess doesn't read as a confident hit.
+
+A `trivial` verdict is only trusted from the **rules** stage, which matches greetings by
+pattern. The classifier saying "trivial" is a guess, and it mis-filed a real question
+during testing: *"which model verifies answers in this system?"* came back from the 350M
+as *"The question itself is the answer."*
+
+The chosen level, budget and reason appear as `effort` in `x_legend_route` and on
+`/route/debug`.
+
+## Adjudication
+
+`app/adjudicate.py` checks an answer after it exists. Three mechanisms, in descending
+order of how often they can run.
+
+**The capitulation guard** is free — a numeric comparison, no generation. On a bare
+denial, if the reply's operative number differs from the previous reply's, the model
+changed its answer under pressure that carried no information. That earns exactly one
+re-work with a note saying so; if the re-work lands on a third number, the reply says so
+and names both candidates instead of picking one. Number extraction is deliberately
+conservative and returns nothing when the reply is ambiguous — a guard that fires on a
+misread is worse than no guard.
+
+**Cross-model verification** is the 1.2B judging a smaller model's answer. Note the
+constraint carefully: the verifier must always be the 1.2B *and* never the model that
+wrote the answer, and with two models those two rules intersect at exactly one case. An
+answer from the reasoning tier has **no independent critic on this hardware**, and the
+response metadata says so (`adjudicated.skipped`) rather than quietly falling back to
+self-verification.
+
+**It is off by default, and that is a measurement, not a default nobody revisited.** The
+critic was measured over 8 question/answer pairs, 4 right and 4 wrong:
+
+| Critic config | Accuracy | Verdict emitted | Wrong answers waved through | Median |
+|---|---|---|---|---|
+| thinking off, 64 tokens | 38% | 7/8 | **4/4** | 7.4 s |
+| thinking off, 192 tokens | 50% | 8/8 | **4/4** | 21.4 s |
+| thinking on, 512 tokens | 25% | **2/8** | 0/4 | 45.1 s |
+| thinking on, 1024 tokens | 75% | 6/8 | 0/4 | 24.9 s |
+| thinking on, 2048 tokens | **88%** | 8/8 | 1/4 | 26.7 s |
+
+Two things follow. Turning the reasoning block off does not buy a cheap critic — it buys
+the 350M's behaviour, waving through every wrong answer. And a budget that looks generous
+can sit below the floor: at 512 tokens the critic spends everything inside `<think>`,
+returns "unsure" on 6 of 8, and charges 45 seconds for it — which from the outside is
+indistinguishable from a working verifier that never fires.
+
+At 2048 tokens it works, at 26.7 s median. But **answering the question on the 1.2B costs
+about the same ~25 s and produces a better answer rather than a grade on a worse one**, and
+in the failure case verification costs double because "incorrect" still has to be followed
+by a regeneration. On this hardware escalating dominates verifying, so `verify_enabled`
+defaults to false. The machinery stays because that reasoning is hardware-specific: a
+second model that could judge in 2 s would flip it immediately. Turn it on with
+`LEGEND_VERIFY_ENABLED=true` or per request with `{"effort": "careful"}`; the eval runner
+reports how many samples paid for it and how many it changed.
+
+**Self-consistency** — answering twice and comparing the two numbers exactly — is
+implemented and off by default (`LEGEND_SELF_CONSISTENCY`). It is not self-verification:
+no model judges anything, two extracted numbers are compared. It doubles latency on the
+slowest tier, so it is a knob for tuning rather than a default.
+
+At most one repair, ever. Unbounded critique oscillates (A says 4, B says 2, A says 2…)
+and small critics are exactly noisy enough to make that likely.
+
+## Retrieval
+
+The last error class the other layers cannot touch: facts neither model holds, where more
+thinking cannot help because the answer was never in the weights.
+
+```
+uv run python scripts/ingest.py                     # ingest README.md + ROADMAP.md
+uv run python scripts/ingest.py notes/ handbook.md  # ingest your own documents
+uv run python scripts/ingest.py --list              # what is indexed
+uv run python scripts/ingest.py --probe "…"         # score a question, to set the threshold
+```
+
+Storage is sqlite plus numpy (`data/corpus.db`, gitignored and rebuildable) — no vector
+database, because brute-force cosine over a few thousand chunks costs well under a
+millisecond, which is invisible next to a 1.2B's 25 s. Embeddings come from the bge model
+already pinned for routing. The index records which embedder built it and refuses a
+mismatch, since searching with the wrong model doesn't fail, it returns confident nonsense.
+
+**Gated, not always-on.** In the paper this design follows, indiscriminate retrieval *hurt*
+GPQA by 5.0 points, because a passage that is merely present overrides knowledge the model
+already had right. Two gates stand in front: a cheap syntactic one in `app/effort.py` that
+asks whether the prompt is a lookup at all (arithmetic, code, greetings and creative work
+never qualify), and a similarity threshold that discards anything not actually about the
+question. Calibrated on this corpus with `--probe`:
+
+| question | top score | injected? |
+|---|---|---|
+| "which model verifies answers in this system" | 0.759 | yes |
+| "how do I run the evals" | 0.739 | yes |
+| "what is the capital of Australia" | 0.512 | no |
+
+bge-small puts unrelated English around 0.5–0.6, so the default cut-off is 0.66 — well
+above the naive midpoint. Re-probe after changing the corpus rather than trusting that
+number.
+
+**A retrieval hit escalates to the reasoning tier.** The roadmap's premise is that a
+grounded small model beats an ungrounded large one, and that assumes the small model can
+read. Handed the chunk saying *"the verifier is always the 1.2B and never the 350M"*, the
+350M answered *"The model that verifies answers is LFM2.5-350M"* — it inverted the source.
+Reading a passage and answering strictly from it is a different skill from recall, and it
+is the one the 1.2B has.
+
+**Citations are computed, never requested.** The first version labelled each passage
+`[source#heading]` and asked the model to copy that; the 1.2B replied with only the
+bracketed citation and no answer, having matched the most recent pattern in the prompt.
+The sources are known exactly at that point, so `app/api.py` appends a `Sources:` line
+itself — the same rule `app/guardrails.py` follows.
+
+On a follow-up, retrieval runs against the thread's **anchor** turn, not against "explain
+that". Corpus text is injected per request rather than kept in the conversation, so
+without that a grounded thread would lose its source material on turn two.
+
+Retrieval activity shows up as `retrieved` in `x_legend_route`; `GET /retrieval/status`
+reports what is indexed.
+
 ## Persona
 
 Every request gets a shared system prompt (`app/persona.py`) prepended automatically
@@ -277,6 +424,16 @@ Environment variables (prefix `LEGEND_`), see `app/config.py`:
 - `LEGEND_ROUTER_ALIAS` — which `models.yaml` alias fills the router role (trivial
   replies + stage-3 classifier), default `general`
 - `LEGEND_ASSISTANT_NAME` — unset until a name is picked; see Persona above
+- `LEGEND_DEFAULT_EFFORT` — `auto` (default), or pin every request to one level
+- `LEGEND_VERIFY_ENABLED` — cross-model critic, default **false**; see Adjudication
+- `LEGEND_SELF_CONSISTENCY` — answer twice and compare, default false
+- `LEGEND_CRITIC_ALIAS` — which tier judges, default `think`
+- `LEGEND_RETRIEVAL_ENABLED` — default true (a missing corpus is simply inert)
+- `LEGEND_RETRIEVAL_DB` — index location, default `data/corpus.db`
+- `LEGEND_RETRIEVAL_MIN_SCORE` — cosine cut-off, default `0.66`; calibrate with `--probe`
+- `LEGEND_RETRIEVAL_TOP_K` — chunks injected, default 3
+- `LEGEND_RETRIEVAL_CITE` — append the computed `Sources:` line, default true
+- `LEGEND_READER_ALIAS` — tier that answers from retrieved text, default `think`
 
 ## Tests
 
@@ -299,9 +456,15 @@ uv run python scripts/eval.py --routes-only       # routing only, ~1 ms a case
 uv run python scripts/eval.py --save-baseline     # accept the current numbers
 ```
 
-Cases are grouped as `computable`, `reasoning`, `dispute`, `factual`, `persona` and
-`cheap` (the last asserting that lookups are *not* promoted to the 1.2B, which protects
-latency). Every case came from something observed in real use.
+Cases are grouped as `computable`, `reasoning`, `dispute`, `factual`, `persona`, `cheap`,
+`effort` and `retrieval`. `cheap` asserts that lookups are *not* promoted to the 1.2B,
+which protects latency — the thing that otherwise rots silently. Every case came from
+something observed in real use.
+
+Alongside the pass rates, a run reports the numbers the tuning phase needs: the spread of
+effort levels, how many samples paid for adjudication and how many it changed, how many
+had no available critic, and how often retrieval injected corpus text. Budget discipline
+is a number, not a feeling — an accuracy win that triples median latency is not a win.
 
 Two properties worth preserving if you extend it:
 
@@ -376,17 +539,23 @@ Two smaller things the dispute path exposed, both handled:
 
 ## Not built yet
 
-See [ROADMAP.md](ROADMAP.md) for the full plan, the measured constraints behind it, and
-why RL post-training isn't viable on this hardware. In short:
+See [ROADMAP.md](ROADMAP.md) for the full plan and the measured constraints behind it.
+Steps 2 (evals), 3 (effort and adjudication) and 4 (retrieval) are built; what remains:
 
-- **An eval set** — next, and a prerequisite for the rest. Every number in this README came
-  from a throwaway script; improvements can't be told from noise without fixed cases.
-- **Adjudication with an effort controller.** The 1.2B verifies at ~100% on the measured
-  set but costs ~28 s, so it needs a difficulty estimate made *before* answering. Per-effort
-  token budgets would also fix the ~1-in-6 dispute turns that currently exhaust the budget.
-- **Retrieval**, for the facts neither model knows — gated, not always-on.
-- Tool execution, vision, and RL on weights: all deferred, with reasons in the roadmap.
+- **Tuning.** Everything above ships at a default chosen from measurement, but several are
+  single knobs with a switch attached — `verify_enabled`, `self_consistency`,
+  `retrieval_min_score`, the follow-up budgets. The eval harness now reports the cost side
+  of each, so these can be settled with data rather than argued about.
+- **A general-knowledge corpus.** Retrieval works, but the corpus that ships is the
+  project's own documentation. The `factual` cases still fail because nothing indexed
+  knows when the Treaty of Westphalia was signed. That is a corpus to supply, not code to
+  write.
+- **A contextual bandit over the router** — five routes, reward from whether a guardrail
+  passed and how long the answer took, trained on the decisions `/route/history` already
+  logs. No GPU, ~50 lines of numpy. It needed the eval set first, which now exists.
 - **Tool execution.** The API forwards `tools` and returns `tool_calls` as-is; there's
   no server-side agent loop that dispatches them, and no tier currently advertises tool
   support at all. `app/router/engine.py` documents the extension point.
 - Vision. Parked with the Qwen3.5-0.8B tier; image requests are rejected with a 422.
+- RL on model weights: deferred with reasons in the roadmap — no NVIDIA GPU, and TRL's
+  GRPO path requires vLLM and CUDA.

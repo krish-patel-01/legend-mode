@@ -136,6 +136,10 @@ class RouterEngine:
     def router_spec(self) -> ModelSpec:
         return self._router_spec
 
+    @property
+    def registry(self) -> ModelRegistry:
+        return self._registry
+
     async def warmup(self) -> None:
         await self.verify_models()
         try:
@@ -187,6 +191,7 @@ class RouterEngine:
             hit = cached.model_copy(
                 update={
                     "stage": "cache",
+                    "origin": cached.stage,
                     "reason": f"cached ({cached.stage}: {cached.reason})",
                     "elapsed_ms": (time.perf_counter() - started) * 1000,
                 }

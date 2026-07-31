@@ -18,7 +18,8 @@
 #
 # Fields:
 #   id           unique, kebab-case
-#   category     computable | reasoning | dispute | factual | persona | cheap
+#   category     computable | reasoning | dispute | factual | persona | cheap |
+#                effort | retrieval
 #   prompt       single-turn input
 #   turns        multi-turn: a list of user messages; the real reply is fed back between
 #                them, and checks apply to the last turn unless the turn says otherwise
@@ -34,6 +35,9 @@
 #     number       this number must appear (digits or the English word)
 #     not_number   none of these numbers may appear
 #     regex        reply must match
+#     effort       expected effort level (fast | standard | careful); a list means any
+#     max_tokens_below  the granted token budget must be under this
+#     retrieved    true if corpus text must have been injected, false if it must not
 
 cases:
 
@@ -420,10 +424,106 @@ cases:
     category: factual
     prompt: "what is the capital of Australia"
     samples: 2
-    note: "Sydney is the classic wrong answer here."
+    note: >
+      Sydney is the classic wrong answer here. `retrieved: false` is part of the case:
+      the corpus is project documentation and its best chunk scores ~0.51 against a 0.66
+      threshold, so nothing should be injected. Retrieving anyway is the -5.0 GPQA
+      regression this design cites, and it would show up here first.
     expect:
       contains: ["canberra"]
       not_contains: ["sydney"]
+      retrieved: false
+
+  # --- effort: the controller's budgets and levels -----------------------------------
+
+  - id: bare-denial-gets-a-small-budget
+    category: effort
+    turns:
+      - "How many boxes do I have if I have two boxes with one box inside each?"
+      - "nope"
+    samples: 2
+    note: >
+      The bug step 3 exists to fix. A contentless denial used to reach the reasoning tier
+      with the full 1536-token budget and nothing concrete to think about, and roughly 1
+      turn in 6 burned the lot and returned empty content. The reply wanted is one
+      sentence asking which part is wrong.
+    expect:
+      route: think
+      max_tokens_below: 512
+      regex: "\\w"
+
+  - id: greetings-cost-almost-nothing
+    category: effort
+    prompt: "hi there"
+    note: "Latency is the thing that silently rots; this is the tripwire."
+    expect:
+      effort: fast
+      max_tokens_below: 512
+
+  - id: grounded-questions-are-fast
+    category: effort
+    prompt: "how much is 15 percent of 240"
+    note: "A guard computed the answer; the model is only phrasing it."
+    expect:
+      effort: fast
+      grounded: percent_of
+      number: 36
+
+  - id: a-correction-gets-more-room-than-a-denial
+    category: effort
+    turns:
+      - "Five monkeys are jumping around on a four poster bed while three chickens stand and watch. How many legs are on the floor?"
+      - "But the monkeys are on the bed"
+    note: >
+      A correction re-works the whole problem with the new fact included, so it earns the
+      largest of the three follow-up budgets — but still less than the tier default.
+    expect:
+      route: think
+      effort: careful
+      max_tokens_below: 1536
+
+  # --- retrieval: questions only the local corpus can answer -------------------------
+  #
+  # The corpus is the project's own documentation (scripts/ingest.py, default sources
+  # README.md and ROADMAP.md). That is a deliberate choice: nothing in it is knowledge
+  # either model could hold parametrically, so these cases measure retrieval rather than
+  # measuring whether the harness can read a file it was handed the answers in.
+
+  - id: corpus-answers-a-project-question
+    category: retrieval
+    prompt: "which model verifies answers in this system?"
+    samples: 2
+    note: >
+      Found in live testing. Answered by the 350M with the passage in front of it, the
+      reply was "The model that verifies answers is LFM2.5-350M" — the exact inverse of
+      the retrieved text. A retrieval hit now escalates to the reading tier.
+    expect:
+      retrieved: true
+      any_of: ["1.2b", "1.2 b", "lfm2.5-1.2b"]
+
+  - id: corpus-answers-a-how-do-i-question
+    category: retrieval
+    prompt: "how do I run the evals in this project?"
+    samples: 2
+    expect:
+      retrieved: true
+      any_of: ["eval.py", "scripts/eval", "cases.yaml"]
+
+  - id: arithmetic-never-retrieves
+    category: retrieval
+    prompt: "what is 17 * 23"
+    note: "A computed answer is exact; a document can only muddy it."
+    expect:
+      retrieved: false
+      grounded: arithmetic
+      number: 391
+
+  - id: creative-work-never-retrieves
+    category: retrieval
+    prompt: "give me two ideas for dinner"
+    expect:
+      retrieved: false
+      not_route: think
 
   - id: obscure-date-fact
     category: factual

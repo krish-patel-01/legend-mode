@@ -45,7 +45,10 @@ ROOT = Path(__file__).resolve().parent.parent
 CASES = ROOT / "evals" / "cases.yaml"
 BASELINE = ROOT / "evals" / "baseline.json"
 
-CATEGORIES = ("computable", "reasoning", "dispute", "factual", "persona", "cheap")
+CATEGORIES = (
+    "computable", "reasoning", "dispute", "factual", "persona", "cheap",
+    "effort", "retrieval",
+)
 
 _WORD_NUMBERS = {
     "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
@@ -90,6 +93,10 @@ class Sample:
     model: str = ""
     grounded: str | None = None
     elapsed_ms: float = 0.0
+    effort: str = ""
+    max_tokens: int = 0
+    adjudicated: dict[str, Any] | None = None
+    retrieved: list[str] | None = None
 
 
 def check(reply: str, meta: dict[str, Any], expect: dict[str, Any]) -> list[str]:
@@ -147,6 +154,25 @@ def check(reply: str, meta: dict[str, Any], expect: dict[str, Any]) -> list[str]
         if not re.search(pattern, reply):
             problems.append(f"regex {pattern!r} did not match")
 
+    if (want_effort := expect.get("effort")) is not None:
+        allowed = want_effort if isinstance(want_effort, list) else [want_effort]
+        got_effort = (meta.get("effort") or {}).get("level")
+        if got_effort not in allowed:
+            problems.append(f"effort={got_effort} not in {allowed}")
+
+    if (budget := expect.get("max_tokens_below")) is not None:
+        got_budget = (meta.get("effort") or {}).get("max_tokens", 0)
+        if got_budget >= budget:
+            problems.append(f"token budget {got_budget} not below {budget}")
+
+    if (want_r := expect.get("retrieved")) is not None:
+        # `retrieved` is None when retrieval never ran and [] when it ran and found
+        # nothing above threshold. Both mean "no corpus text reached the model", and the
+        # distinction matters for cost, not for correctness — so the check flattens them.
+        got_r = bool(meta.get("retrieved"))
+        if got_r != bool(want_r):
+            problems.append(f"retrieved={meta.get('retrieved')!r}, expected {want_r}")
+
     return problems
 
 
@@ -194,6 +220,7 @@ class Runner:
                 messages.append({"role": "assistant", "content": reply})
 
         problems = check(reply, meta, expect)
+        plan = meta.get("effort") or {}
         return Sample(
             passed=not problems,
             problems=problems,
@@ -202,6 +229,10 @@ class Runner:
             model=meta.get("model", ""),
             grounded=meta.get("grounded"),
             elapsed_ms=(time.perf_counter() - started) * 1000,
+            effort=plan.get("level", ""),
+            max_tokens=plan.get("max_tokens", 0),
+            adjudicated=meta.get("adjudicated"),
+            retrieved=meta.get("retrieved"),
         )
 
 
@@ -260,6 +291,11 @@ def main() -> int:
     failed_detail: list[tuple[str, Sample]] = []
     skipped: list[str] = []
     corrected = grounded_total = 0
+    # Step 3's budget discipline is a number, not a feeling: an accuracy win that triples
+    # median latency is not a win, so what fraction of requests paid for adjudication is
+    # reported alongside the scores rather than left to be inferred.
+    effort_counts: dict[str, int] = {}
+    adj_ran = adj_repaired = adj_no_critic = retrieval_fired = 0
 
     for case in cases:
         cid, category = case["id"], case["category"]
@@ -283,10 +319,19 @@ def main() -> int:
         latencies.extend(s.elapsed_ms for s in samples)
         corrected += sum(1 for s in samples if (s.grounded or "").endswith("(corrected)"))
         grounded_total += sum(1 for s in samples if s.grounded)
+        for s in samples:
+            if s.effort:
+                effort_counts[s.effort] = effort_counts.get(s.effort, 0) + 1
+            if s.retrieved:
+                retrieval_fired += 1
+            if s.adjudicated:
+                adj_ran += 1
+                adj_repaired += bool(s.adjudicated.get("repaired"))
+                adj_no_critic += bool(s.adjudicated.get("skipped"))
 
         mark = "ok  " if score == 1.0 else ("FAIL" if score == 0.0 else "flaky")
         first = samples[0]
-        print(f"  [{mark}] {score:>4.0%} {cid:<34} {first.route:<8} "
+        print(f"  [{mark}] {score:>4.0%} {cid:<34} {first.route:<8} {first.effort:<9}"
               f"{str(first.grounded or '-'):<14} {first.elapsed_ms:>6.0f}ms")
         if args.verbose or score < 1.0:
             for s in samples:
@@ -317,6 +362,21 @@ def main() -> int:
         # persona wording or the note format ever changes.
         print(f"grounded {grounded_total} sample(s), of which {corrected} needed "
               f"correction ({corrected / grounded_total:.0%})")
+
+    total_samples = sum(effort_counts.values())
+    if total_samples:
+        spread = "  ".join(
+            f"{level} {effort_counts.get(level, 0)} ({effort_counts.get(level, 0) / total_samples:.0%})"
+            for level in ("fast", "standard", "careful")
+        )
+        print(f"effort   {spread}")
+    if adj_ran:
+        # `no_critic` is the honest count of times adjudication was authorised and could
+        # not run: with two models, a reasoning-tier answer has no independent judge.
+        print(f"adjudicated {adj_ran} sample(s): {adj_repaired} repaired, "
+              f"{adj_no_critic} had no available critic")
+    if retrieval_fired:
+        print(f"retrieval injected corpus text into {retrieval_fired} sample(s)")
     if skipped:
         print(f"\nskipped ({len(skipped)}: known-failing, or in --routes-only "
               f"multi-turn / no routing expectation): {', '.join(skipped)}")

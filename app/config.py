@@ -52,6 +52,63 @@ class Settings(BaseSettings):
 
     request_timeout: float = 300.0
 
+    # --- effort and adjudication (app/effort.py, app/adjudicate.py) ---------
+    #
+    # "auto" lets app/effort.py estimate per request; "fast"/"standard"/"careful" pin
+    # every request to one level, which is mostly useful for A/B runs of the eval suite.
+    default_effort: str = "auto"
+
+    # Master switch for the cross-model critic, and off by default for a measured reason:
+    # **on this hardware, escalating dominates verifying.**
+    #
+    # A verification pass is the 1.2B reading a question and an answer and reasoning to a
+    # verdict — 26.7 s median at the budget where it actually works (see the table in
+    # app/adjudicate.py). Answering the question on the 1.2B instead costs about the same
+    # ~25 s, and produces a better answer rather than a grade on a worse one. Verifying
+    # therefore buys nothing the cheaper move does not, and in the failure case it costs
+    # double, because a verdict of "incorrect" still has to be followed by a regeneration.
+    #
+    # The machinery stays because the reasoning is hardware-specific, not permanent: a
+    # second model that could judge in 2 s would flip this immediately. Turn it on with
+    # LEGEND_VERIFY_ENABLED=true, or per request with {"effort": "careful"}; the eval
+    # harness reports what fraction of requests paid for it and whether anything changed.
+    #
+    # Off does not mean unchecked. The free deterministic checks — guardrails, and the
+    # capitulation guard in app/adjudicate.py — run regardless. Only the paid one is off.
+    verify_enabled: bool = False
+
+    # Answer twice and compare the two answers numerically, abstaining when they
+    # disagree. Not self-verification — no model judges anything, two numbers are
+    # compared exactly — but it doubles latency on the slowest tier, so it is off until
+    # the eval harness says the accuracy is worth it.
+    self_consistency: bool = False
+
+    # Which model does the judging. Must never be the model that produced the answer,
+    # and must never be the 350M, which scores at chance as a critic (see models.yaml).
+    critic_alias: str = "think"
+
+    # --- retrieval (app/retrieval/) ----------------------------------------
+    retrieval_enabled: bool = True
+
+    # Which tier answers once a passage has been retrieved. Reading a document and
+    # answering strictly from it is a different skill from recalling a fact, and it is
+    # the one the 1.2B has. Measured: handed a chunk reading "the verifier is always the
+    # 1.2B and never the 350M", the 350M answered "The model that verifies answers is
+    # LFM2.5-350M" — it inverted the source. Retrieval only pays if the reader can read.
+    reader_alias: str = "think"
+    retrieval_db: Path = ROOT / "data" / "corpus.db"
+    retrieval_top_k: int = 3
+
+    # Append a "Sources: …" line to a retrieval-grounded reply. Computed by the server,
+    # never written by the model — see the note in app/retrieval/service.py.
+    retrieval_cite: bool = True
+
+    # Cosine cut-off below which a hit is discarded. bge-small puts unrelated English
+    # around 0.6, so this is well above the naive midpoint on purpose — injecting a
+    # merely-plausible passage is how retrieval makes answers worse rather than better.
+    # Calibrate with: uv run python scripts/ingest.py --probe "your question"
+    retrieval_min_score: float = 0.66
+
     # Left unset until a name is picked. The system prompt (app/persona.py) reads
     # this and tells the model to say it doesn't have a name yet rather than either
     # inventing one or claiming to be ChatGPT/Claude/whatever it was trained near.

@@ -19,6 +19,7 @@ from app.api import router as api_router
 from app.backends.ollama import OllamaClient
 from app.config import get_registry, get_route_table, get_settings
 from app.history import HistoryStore
+from app.retrieval import Retrieval, VectorStore
 from app.router.engine import RouterEngine
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -53,11 +54,44 @@ async def lifespan(app: FastAPI):
     app.state.engine = engine
     app.state.history = HistoryStore()
     app.state.settings = settings
+    app.state.retrieval = _open_retrieval(client, registry, settings)
     log.info("legend-mode ready (router=%s)", engine.router_spec.tag)
 
     yield
 
     await client.aclose()
+
+
+def _open_retrieval(client, registry, settings) -> Retrieval | None:
+    """Attach the corpus if there is one. An absent or unreadable index is not fatal.
+
+    A missing corpus is the normal state on a fresh checkout — nothing has been ingested
+    yet — and it degrades to exactly the behaviour that existed before retrieval, so it
+    warrants a log line rather than a failed boot.
+    """
+    if not settings.retrieval_enabled:
+        return None
+    try:
+        store = VectorStore(settings.retrieval_db)
+    except Exception as exc:  # noqa: BLE001 - corpus is optional
+        log.warning("retrieval disabled: cannot open %s (%s)", settings.retrieval_db, exc)
+        return None
+
+    if len(store) == 0:
+        log.info(
+            "retrieval index is empty (%s); run scripts/ingest.py to populate it",
+            settings.retrieval_db,
+        )
+    else:
+        log.info("retrieval: %d chunk(s) from %s", len(store), ", ".join(store.sources))
+
+    return Retrieval(
+        client,
+        registry.embedder,
+        store,
+        top_k=settings.retrieval_top_k,
+        min_score=settings.retrieval_min_score,
+    )
 
 
 app = FastAPI(title="Legend Mode", lifespan=lifespan)

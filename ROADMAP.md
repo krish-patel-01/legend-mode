@@ -4,7 +4,10 @@ The goal is accuracy on this laptop that stands up against a single 10–15B mod
 path is architectural, not more parameters: nothing here proposes a bigger model, because
 nothing bigger fits.
 
-Steps 1 and 1.5 are done and on `two-model-guardrails`. This file covers everything after.
+Steps 1 through 4 are built and on `two-model-guardrails`. Each is marked DONE below with
+what it actually became, since three of the four changed shape once measured. What is
+left is tuning — the defaults below are each a switch with a measurement behind it, and
+the eval harness now reports the cost side of every one of them.
 
 ---
 
@@ -101,7 +104,49 @@ against the committed baseline, and the numbers reproduce what `README.md` claim
 
 ---
 
-## Step 3 — Effort controller and adjudication
+## Step 3 — Effort controller and adjudication — **DONE**
+
+Built as `app/effort.py` and `app/adjudicate.py`. See the Effort and Adjudication
+sections of `README.md` for what shipped.
+
+**What the design got wrong, and what measuring fixed.** Two things below turned out not
+to survive contact with the hardware, and both are worth recording because the reasoning
+that produced them looked sound.
+
+*The two critic rules do not intersect.* "The verifier is always the 1.2B and never the
+350M" and "the verifier is never the model that produced the answer" are each defensible.
+Together, with a two-model palette, they permit exactly one case — the 1.2B judging a
+smaller model's answer — and forbid verification of anything the reasoning tier writes.
+The implementation reports that gap in the response metadata rather than quietly
+substituting self-verification, which the envelope above already calls worthless.
+
+*Verification is dominated by escalation.* The critic was re-measured over 8 pairs, and
+the number that mattered was not accuracy:
+
+| Critic config | Accuracy | Verdict emitted | Wrong answers waved through | Median |
+|---|---|---|---|---|
+| thinking off, 64 tokens | 38% | 7/8 | **4/4** | 7.4 s |
+| thinking off, 192 tokens | 50% | 8/8 | **4/4** | 21.4 s |
+| thinking on, 512 tokens | 25% | **2/8** | 0/4 | 45.1 s |
+| thinking on, 1024 tokens | 75% | 6/8 | 0/4 | 24.9 s |
+| thinking on, 2048 tokens | **88%** | 8/8 | 1/4 | 26.7 s |
+
+Turning the reasoning block off does not buy a cheap critic, it buys the 350M's
+behaviour. And 512 tokens — the budget the first implementation shipped with — is below
+the floor where a verdict is emitted at all: it returns "unsure" on 6 of 8 and charges 45
+seconds, which from outside looks exactly like a working verifier that never fires.
+
+At the budget where it works, verification costs 26.7 s. Answering the same question on
+the 1.2B costs about 25 s and yields a better answer instead of a grade on a worse one,
+and in the failure case verification costs double because "incorrect" still has to be
+followed by a regeneration. So `verify_enabled` ships false. The machinery stays, because
+that conclusion is about this hardware and not about the idea: a second model that could
+judge in 2 s would flip it immediately.
+
+What did pay for itself, and is on by default: the per-effort token budgets, and the
+capitulation guard — which costs nothing at all, being a numeric comparison.
+
+The rest of this section is the original design, kept because it explains the choices.
 
 This is where the self-reflection idea lands, made affordable. The controller is not a
 nicety; at 28 s per verification it is the only thing that makes verification possible at
@@ -142,7 +187,35 @@ the eval harness report it. An accuracy win that triples median latency is not a
 
 ---
 
-## Step 4 — Retrieval
+## Step 4 — Retrieval — **DONE**
+
+Built as `app/retrieval/` and `scripts/ingest.py`. See the Retrieval section of
+`README.md`.
+
+Two things the design underspecified, both found by running it:
+
+**A grounded small model still has to be able to read.** The design says "a grounded 1B
+outperforms an ungrounded 14B" and then leaves open which tier answers. Handed the chunk
+reading *"the verifier is always the 1.2B and never the 350M"*, the 350M answered *"The
+model that verifies answers is LFM2.5-350M"* — the exact inverse of the source in front
+of it. A retrieval hit now escalates to the reading tier.
+
+**Do not ask a 1.2B for a citation.** The first prompt labelled each passage
+`[source#heading]` and asked the model to copy it. The reply was the bracketed citation
+and nothing else — it matched the most recent pattern in the prompt rather than using the
+text beneath it. The citations are known exactly at that point, so they are computed and
+appended by `app/api.py`. Same rule as `app/guardrails.py`: compute what can be computed.
+
+The gate calibrated cleanly. On this corpus, on-topic questions score 0.70–0.76 and
+off-topic ones 0.50–0.51, so the 0.66 default sits in a wide gap — but that is a property
+of this corpus, and `scripts/ingest.py --probe` exists so it gets re-measured rather than
+inherited.
+
+What is *not* solved: the `factual` cases still fail, because the corpus that ships is
+this project's own documentation and nothing in it knows when the Treaty of Westphalia
+was signed. The machinery is done; a general-knowledge corpus is a thing to supply.
+
+The rest of this section is the original design, kept because it explains the choices.
 
 The last error class: things neither model knows, where no amount of extra thinking helps.
 This is also the one place a small model genuinely beats a large one — a grounded 1B
@@ -172,10 +245,13 @@ GRPO still could not consistently win Wordle, and gpt-oss-20b was needed for tha
 ceiling model here is 1.2B. Revisit only with an NVIDIA GPU — and note the paper's own
 finding cuts the same way: systems are planner-limited, and architecture beat scaling.
 
-**Contextual bandit over the router — viable, but not yet.** Five routes, reward from
-whether a guardrail passed and how long the answer took, trained on decisions
-`/route/history` already logs. No GPU, ~50 lines of numpy. It needs step 2 first, because
-without a fixed eval set there is no way to know whether it helped.
+**Contextual bandit over the router — now unblocked.** Five routes, reward from whether a
+guardrail passed and how long the answer took, trained on decisions `/route/history`
+already logs. No GPU, ~50 lines of numpy. It was waiting on step 2, which is built, so the
+"is this better or is this noise" question now has an answer. The highest-value target is
+the stage that measurably guesses: the classifier mis-filed a real question as `trivial`
+during step 3 testing, and that is exactly a decision a bandit could learn from feedback
+the system already collects.
 
 **Tool execution.** `tools` is forwarded and `tool_calls` returned untouched; no tier
 advertises tool support. `app/router/engine.py` documents the extension point. Deliberately
@@ -219,3 +295,14 @@ substitutes. Better to plan around that than to discover it at step 4.
 - **Distrust a passing test as much as a failing one.** Two harness bugs — a scorer
   reading a `<think>` block instead of a verdict, and a brand check flagging a correct
   denial — each pointed at the wrong conclusion until the harness itself was fixed.
+- **A component that silently does nothing looks identical to one that works.** The
+  critic at a 512-token budget answered "unsure" on 6 of 8 pairs and charged 45 seconds
+  for it. Nothing errored; the feature was simply inert. Measure that a mechanism *fires*,
+  not only that it does not crash.
+- **Two individually sound constraints can have an empty intersection.** "Always the 1.2B"
+  and "never the model that answered" each read as obviously right, and together they rule
+  out verifying anything the reasoning tier writes. Check that a rule set admits the case
+  it was written for.
+- **Prefer the cheaper move that produces the answer over the one that grades it.** At
+  equal cost, escalating beats verifying, because verifying still leaves you needing an
+  answer. This is what turned step 3 from a verification design into a budgeting one.
