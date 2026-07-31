@@ -125,11 +125,36 @@ _CONTINUATION = re.compile(
 )
 
 
-def followup_kind(text: str) -> str | None:
+# A correction: the user is not saying "wrong", they are supplying a fact the answer
+# missed. "But the monkeys are on the bed" is the observed case — it matched no dispute
+# or continuation pattern, so nothing marked it as a follow-up and the model repeated its
+# original answer unchanged. This needs its own kind rather than folding into `dispute`,
+# because the right instruction is the opposite one: a dispute should not simply cave,
+# whereas a correction *should* re-work the answer around what the user just added.
+# "what about the ..." and "don't forget ..." are anchored to a short whole message: as a
+# bare phrase ("what about the bed") the user is naming a thing the answer overlooked, but
+# with a question trailing behind it ("what about the tax on top of that, does it apply
+# before or after the discount") it is a new question that deserves its own routing.
+_CORRECTION = re.compile(
+    r"^\s*(?:but|actually|wait|hold on|no but|except)\b"
+    r"|\byou (?:forgot|missed|didn'?t (?:count|include|consider|account))\b"
+    r"|\byou need to (?:count|include)\b"
+    r"|^\s*(?:and )?don'?t forget\b[^.?!]{0,30}[\s.,!?]*$"
+    r"|^\s*what about (?:the |his |her |its |their )?[\w\s]{0,20}[\s.,!?]*$",
+    re.IGNORECASE,
+)
+
+
+def followup_kind(text: str, message_count: int = 0) -> str | None:
     """Classify a short reply as a follow-up to the previous turn, or None.
 
-    Returns "dispute" (escalate regardless of history), "weak_dispute" or
-    "continuation" (both only meaningful if the previous turn was on a sticky tier).
+    Returns "dispute" (escalate regardless of history), "correction", "weak_dispute" or
+    "continuation". All but "dispute" are only meaningful with a previous turn to refer
+    back to.
+
+    `message_count` guards the correction pattern only. A message opening with "but" is
+    a correction mid-thread and an ordinary question when it is the first thing said, and
+    the difference is not recoverable from the text alone.
     """
     stripped = text.strip()
     # A long message carries its own signal and should route on its own merits.
@@ -141,6 +166,8 @@ def followup_kind(text: str) -> str | None:
         return "weak_dispute"
     if _CONTINUATION.match(stripped):
         return "continuation"
+    if message_count >= 3 and _CORRECTION.search(stripped):
+        return "correction"
     return None
 
 

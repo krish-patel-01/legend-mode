@@ -86,6 +86,18 @@ DISPUTE_NOTE = (
     "have not said what is wrong, ask them which part they disagree with."
 )
 
+# The mirror image, and deliberately not the same text. A dispute says "that's wrong" and
+# carries no information, so the right instruction is to hold firm unless the recheck
+# shows otherwise. A correction says "but the monkeys are on the bed" — it hands over a
+# fact the answer missed, and there the stubbornness DISPUTE_NOTE encourages is exactly
+# wrong. Observed: the previous answer was repeated verbatim after the user supplied the
+# missing constraint, because nothing marked the turn as a correction at all.
+CORRECTION_NOTE = (
+    "The user is pointing out something your previous answer missed or got wrong. Treat "
+    "what they just said as true. Re-work the answer from the start with it included, "
+    "in two or three sentences, and say plainly if it changes your conclusion."
+)
+
 
 def build_system_prompt(assistant_name: str | None, style: str = "full") -> str:
     brief = style == "brief"

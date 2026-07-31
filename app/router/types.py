@@ -41,6 +41,7 @@ class RouteDecision(BaseModel):
             "confidence": round(self.confidence, 4),
             "elapsed_ms": round(self.elapsed_ms, 2),
             "grounded": self.grounded,
+            "followup": self.followup,
         }
 
 

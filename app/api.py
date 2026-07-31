@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse
 
 from app import guardrails
 from app.backends.ollama import OllamaError
-from app.persona import DISPUTE_NOTE, ensure_system_prompt
+from app.persona import CORRECTION_NOTE, DISPUTE_NOTE, ensure_system_prompt
 from app.router.engine import anchor_text, extract_text, has_images
 from app.router.types import RouteRequest
 
@@ -135,6 +135,8 @@ async def chat_completions(request: Request) -> Any:
 
     if decision.followup in {"dispute", "weak_dispute"}:
         chat_messages = _append_system(chat_messages, DISPUTE_NOTE)
+    elif decision.followup == "correction":
+        chat_messages = _append_system(chat_messages, CORRECTION_NOTE)
 
     if body.get("stream"):
         return StreamingResponse(

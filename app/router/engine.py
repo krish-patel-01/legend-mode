@@ -211,17 +211,22 @@ class RouterEngine:
         previous turn was almost always resolved a moment ago and costs nothing to look
         up. The recursive call passes no `prev_user_text`, so it cannot recurse further.
         """
-        kind = rules.followup_kind(req.text)
+        kind = rules.followup_kind(req.text, req.message_count)
         if kind is None:
             return None
 
-        # An explicit "that's wrong" needs no history: whatever answered last was not
-        # good enough, so send it somewhere better.
-        if kind == "dispute":
+        # An explicit "that's wrong", or a correction supplying a missed fact, needs no
+        # history: whatever answered last was not good enough, so send it somewhere
+        # better. They differ in the instruction attached at generation time, not here.
+        if kind in ("dispute", "correction"):
             return RouteDecision(
                 route=self._settings.escalate_route,
                 stage="sticky",
-                reason="user disputed the previous answer; escalating",
+                reason=(
+                    "user disputed the previous answer; escalating"
+                    if kind == "dispute"
+                    else "user corrected or added a missed detail; escalating"
+                ),
                 confidence=0.75,
                 followup=kind,
             )

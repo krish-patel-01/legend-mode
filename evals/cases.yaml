@@ -199,6 +199,20 @@ cases:
     expect:
       contains: ["sgyrt"]
 
+  - id: monkeys-riddle-answer
+    category: reasoning
+    known_failing: true
+    prompt: "Five monkeys are jumping around on a four poster bed while three chickens stand and watch. How many legs are on the floor?"
+    note: >
+      Answer is 10: the monkeys are on the bed so none of their legs are on the floor,
+      three standing chickens give 6, and a four-poster bed has 4 legs of its own. The
+      1.2B answers 26 (5x4 + 3x2), ignoring both the spatial constraint and the bed, and
+      keeps answering 26 after being told the monkeys are on the bed. A multi-constraint
+      lateral riddle, and a plausible ceiling rather than a routing fault.
+    expect:
+      number: 10
+      not_number: [26]
+
   - id: puzzle-rule-does-not-eat-ordinary-questions
     category: cheap
     prompt: "what's wrong with this sentence"
@@ -263,6 +277,20 @@ cases:
     expect:
       route: think
       not_number: [2, 3]
+
+  - id: correction-supplying-a-missed-fact
+    category: dispute
+    turns:
+      - "Five monkeys are jumping around on a four poster bed while three chickens stand and watch. How many legs are on the floor?"
+      - "But the monkeys are on the bed"
+    samples: 2
+    note: >
+      Found in live testing. The second turn matched no follow-up pattern, so no
+      instruction was attached and the model repeated "26 legs." unchanged. This case
+      asserts only that the turn is recognised and routed — whether the 1.2B then gets
+      the riddle right is tracked separately as monkeys-riddle-answer.
+    expect:
+      route: think
 
   - id: bare-confusion-is-a-continuation
     category: dispute

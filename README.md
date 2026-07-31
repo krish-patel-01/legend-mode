@@ -153,8 +153,15 @@ invented "3".
 
 - An explicit dispute ("that's wrong", "are you sure") **escalates** to `think`
   regardless of history — whatever answered last was evidently not good enough.
-- A bare "no"/"nope", or a continuation ("why", "explain that", "go on"), sticks to the
-  tier already handling the thread, but only if that tier is in `sticky_routes`.
+- A **correction** ("but the monkeys are on the bed", "you forgot the bed") also
+  escalates, and is labelled separately because it needs the opposite instruction. A
+  dispute carries no information, so `DISPUTE_NOTE` tells the model not to simply cave; a
+  correction hands over a fact the answer missed, so `CORRECTION_NOTE` tells it to take
+  that as true and re-work from the start. Folding the two together would make the model
+  stubborn at exactly the wrong moment. Only counts from the third message onward —
+  opening with "but" is an ordinary question.
+- A bare "no"/"nope", or a continuation ("why", "explain that", "go on", "what?"), sticks
+  to the tier already handling the thread, but only if that tier is in `sticky_routes`.
 - Pleasantries and fresh questions are untouched. Continuation patterns are anchored at
   both ends so "explain that" sticks while "explain what a REST API is" routes normally.
 
@@ -343,6 +350,19 @@ prompt change to make on one sample. Both puzzles are in the eval suite as
 
 When the reasoning tier exhausts its budget it now says it couldn't reach an answer it
 trusts, rather than "I ran out of thinking room", which wrongly implied a retry would help.
+
+A third case joins them: *"Five monkeys are jumping around on a four poster bed while
+three chickens stand and watch. How many legs are on the floor?"* The answer is 10 — the
+monkeys are on the bed, three standing chickens give 6, and a four-poster bed has 4 legs
+of its own. The 1.2B answers 26 (5×4 + 3×2) and keeps answering 26 after being told
+directly that the monkeys are on the bed.
+
+That case also exposes a real tension with no clean resolution here. `DISPUTE_NOTE` makes
+the model hold its ground, which is right when it is correct and being pushed around (the
+box problem) and wrong when it is not (this riddle). Nothing in the system can tell those
+apart, because nothing can verify a lateral riddle — which is the gap the effort
+controller in `ROADMAP.md` is meant to address, and a reason not to keep patching prompts
+at it.
 
 Two smaller things the dispute path exposed, both handled:
 
