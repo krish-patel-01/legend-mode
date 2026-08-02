@@ -64,6 +64,36 @@ _FOLLOWUP_BUDGET = {
 # app/guardrails.py computed exactly. Long replies there are pure latency.
 _FAST_BUDGET = 256
 
+
+# **A reasoning tier ignores all of the budgets above, and that is a correction.**
+#
+# The reasoning above them is: a dispute reply is two or three sentences, so it does not
+# need 1536 tokens. True of the reply, and irrelevant to the mechanism. A thinking model
+# emits its <think> block *first* and the answer only after it, so a budget below what the
+# reasoning needs does not produce a short answer — it produces **no answer at all**, and
+# the request falls through to the exhaustion message in app/api.py.
+#
+# So the first version of this file made the bug it was written to fix strictly worse. The
+# original complaint was that roughly 1 turn in 6 returned empty content; cutting the
+# budget to 384 returned empty content on essentially every dispute turn — six consecutive
+# "think produced no content in 384 tokens" warnings in one eval run. The eval cases did
+# not catch it, because the exhaustion message satisfies `regex: \w` and contains neither
+# of the forbidden numbers. A passing suite hid it.
+#
+# Measured floor, from the critic probe in app/adjudicate.py: at 256 tokens the 1.2B
+# emitted nothing at all, at 512 it reached an answer 2 times in 8, at 1024 6 times, and
+# only at 2048 every time. The tier's own default is the floor, so on a thinking tier the
+# plan does not shrink it.
+#
+# What follows is that **the token budget is not a brevity lever on a reasoning model.**
+# Brevity there has to come from the prompt — which is what persona.DISPUTE_NOTE does —
+# or not at all. The budget lever still works, and still helps, on tiers that answer
+# without a reasoning block.
+def _budget(wanted: int, tier_max_tokens: int, thinking: bool) -> int:
+    if thinking:
+        return tier_max_tokens
+    return min(wanted, tier_max_tokens)
+
 # Stages that mean "nothing recognised this prompt". `classifier` counts: reaching stage 3
 # at all means rules and embeddings both declined, and the 350M's label is a guess from a
 # model with 50%-accuracy discrimination behind it (see the critic table in models.yaml).
@@ -140,6 +170,7 @@ def estimate(
     grounded: bool = False,
     override: str | None = None,
     retrieval_text: str | None = None,
+    thinking: bool = False,
 ) -> Plan:
     """Pick an effort level for a request that has been routed but not yet answered.
 
@@ -156,7 +187,7 @@ def estimate(
         if level not in LEVELS:
             raise ValueError(f"unknown effort {override!r}; expected one of {LEVELS} or 'auto'")
         return _explicit(  # type: ignore[arg-type]
-            level, tier_max_tokens, decision, retrieval_text or text, grounded
+            level, tier_max_tokens, decision, retrieval_text or text, grounded, thinking
         )
 
     # A guardrail already computed the answer exactly. The model's only remaining job is
@@ -167,14 +198,14 @@ def estimate(
     if grounded:
         return Plan(
             level="fast",
-            max_tokens=_FAST_BUDGET,
+            max_tokens=_budget(_FAST_BUDGET, tier_max_tokens, thinking),
             reason="a guardrail computed this exactly; the model is only phrasing it",
         )
 
     retrieve = wants_retrieval(retrieval_text if retrieval_text is not None else text)
 
     if decision.followup:
-        return _followup_plan(decision.followup, tier_max_tokens, retrieve)
+        return _followup_plan(decision.followup, tier_max_tokens, retrieve, thinking)
 
     # `origin` is set only on a cache hit and carries the stage that actually decided.
     stage = decision.origin or decision.stage
@@ -182,7 +213,7 @@ def estimate(
     if decision.route == "trivial" and stage in _DETERMINISTIC_STAGES:
         return Plan(
             level="fast",
-            max_tokens=min(_FAST_BUDGET, tier_max_tokens),
+            max_tokens=_budget(_FAST_BUDGET, tier_max_tokens, thinking),
             retrieve=retrieve,
             reason="greeting, acknowledgement or identity question",
         )
@@ -209,8 +240,8 @@ def estimate(
     )
 
 
-def _followup_plan(kind: str, tier_max_tokens: int, retrieve: bool) -> Plan:
-    budget = min(_FOLLOWUP_BUDGET.get(kind, tier_max_tokens), tier_max_tokens)
+def _followup_plan(kind: str, tier_max_tokens: int, retrieve: bool, thinking: bool) -> Plan:
+    budget = _budget(_FOLLOWUP_BUDGET.get(kind, tier_max_tokens), tier_max_tokens, thinking)
 
     if kind == "weak_dispute":
         return Plan(
@@ -239,19 +270,20 @@ def _followup_plan(kind: str, tier_max_tokens: int, retrieve: bool) -> Plan:
 
 
 def _explicit(
-    level: Level, tier_max_tokens: int, decision: RouteDecision, text: str, grounded: bool
+    level: Level, tier_max_tokens: int, decision: RouteDecision, text: str, grounded: bool,
+    thinking: bool = False,
 ) -> Plan:
     if level == "fast":
         return Plan(
             level="fast",
-            max_tokens=min(_FAST_BUDGET, tier_max_tokens),
+            max_tokens=_budget(_FAST_BUDGET, tier_max_tokens, thinking),
             reason="caller asked for fast",
         )
     if level == "careful":
         budget = _FOLLOWUP_BUDGET.get(decision.followup or "", tier_max_tokens)
         return Plan(
             level="careful",
-            max_tokens=min(budget, tier_max_tokens),
+            max_tokens=_budget(budget, tier_max_tokens, thinking),
             verify=True,
             guard_capitulation=bool(decision.followup),
             retrieve=not grounded and wants_retrieval(text),

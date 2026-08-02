@@ -56,6 +56,14 @@ _WORD_NUMBERS = {
 }
 _NUMBER_TOKEN = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 
+# The reply app/api.py substitutes when a model spends its whole budget reasoning and
+# emits nothing. Counted globally, because it is the one failure the per-case checks are
+# structurally blind to: it is a well-formed English sentence, so it satisfies
+# `regex: \w`, and it contains no forbidden number, so `not_number` passes too. A change
+# that made every dispute turn return it scored as a clean run — the warnings were only
+# in the server log. If this number is not near zero, something is starving a tier.
+EXHAUSTION_MARKER = "couldn't reach an answer"
+
 
 def numbers_in(text: str) -> set[float]:
     """Every number in a reply, digits and English words alike.
@@ -295,7 +303,7 @@ def main() -> int:
     # median latency is not a win, so what fraction of requests paid for adjudication is
     # reported alongside the scores rather than left to be inferred.
     effort_counts: dict[str, int] = {}
-    adj_ran = adj_repaired = adj_no_critic = retrieval_fired = 0
+    adj_ran = adj_repaired = adj_no_critic = retrieval_fired = exhausted = 0
 
     for case in cases:
         cid, category = case["id"], case["category"]
@@ -322,6 +330,8 @@ def main() -> int:
         for s in samples:
             if s.effort:
                 effort_counts[s.effort] = effort_counts.get(s.effort, 0) + 1
+            if EXHAUSTION_MARKER in s.reply:
+                exhausted += 1
             if s.retrieved:
                 retrieval_fired += 1
             if s.adjudicated:
@@ -377,6 +387,9 @@ def main() -> int:
               f"{adj_no_critic} had no available critic")
     if retrieval_fired:
         print(f"retrieval injected corpus text into {retrieval_fired} sample(s)")
+    if exhausted:
+        print(f"** {exhausted} sample(s) hit the budget-exhaustion reply — see "
+              f"EXHAUSTION_MARKER; a tier is being starved **")
     if skipped:
         print(f"\nskipped ({len(skipped)}: known-failing, or in --routes-only "
               f"multi-turn / no routing expectation): {', '.join(skipped)}")

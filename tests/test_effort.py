@@ -141,6 +141,42 @@ def test_a_continuation_does_not_pay_for_adjudication():
     assert not plan.guard_capitulation
 
 
+def test_a_reasoning_tier_keeps_its_full_budget():
+    """The correction that matters. A thinking model emits its <think> block first, so a
+    budget below what the reasoning needs produces no answer at all rather than a short
+    one — six consecutive "produced no content in 384 tokens" warnings in one eval run,
+    where the complaint being fixed was 1 empty reply in 6. Measured floor: at 256 tokens
+    the 1.2B emitted nothing, at 1024 it reached an answer 6 times in 8."""
+    for kind in ("weak_dispute", "dispute", "correction"):
+        plan = effort.estimate(
+            _decision(route="think", stage="sticky", followup=kind),
+            text="nope", tier_max_tokens=TIER, thinking=True,
+        )
+        assert plan.max_tokens == TIER, kind
+
+
+def test_a_grounded_question_on_a_reasoning_tier_is_not_starved():
+    """Observed: "how much is 15 percent of 240" routed to think, got the 256-token fast
+    budget, and returned the exhaustion message instead of the grounded 36."""
+    plan = effort.estimate(
+        _decision(route="think", stage="rules"),
+        text="how much is 15 percent of 240", tier_max_tokens=TIER,
+        grounded=True, thinking=True,
+    )
+    assert plan.level == "fast"
+    assert plan.max_tokens == TIER
+
+
+def test_budgets_still_shrink_on_a_tier_that_does_not_reason():
+    """The lever still works where it is safe — the failure mode is specific to models
+    that emit a reasoning block before the answer."""
+    plan = effort.estimate(
+        _decision(route="chat", stage="sticky", followup="weak_dispute"),
+        text="nope", tier_max_tokens=512, thinking=False,
+    )
+    assert plan.max_tokens == 384
+
+
 def test_no_followup_budget_can_exceed_its_tier():
     """A tier with a small ceiling must not be handed a follow-up budget above it."""
     for kind in ("weak_dispute", "dispute", "correction"):

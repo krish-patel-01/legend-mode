@@ -178,6 +178,7 @@ async def chat_completions(request: Request) -> Any:
             grounded=grounding is not None,
             override=str(body.get("effort") or settings.default_effort),
             retrieval_text=retrieval_query,
+            thinking=spec.thinking,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -218,6 +219,7 @@ async def chat_completions(request: Request) -> Any:
                 grounded=grounding is not None,
                 override=str(body.get("effort") or settings.default_effort),
                 retrieval_text=retrieval_query,
+                thinking=spec.thinking,
             )
     decision.effort = plan.as_meta()
 
