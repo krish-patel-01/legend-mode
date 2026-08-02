@@ -240,13 +240,34 @@ call, so the estimate is free and can be wrong without costing anything.
 | `standard` | the tier's own ceiling | ordinary chat and reasoning |
 | `careful` | tuned per follow-up kind | disputes, corrections, prompts nothing recognised |
 
-**The budgets are the part that fixed a live bug.** Before this, every request got its
-tier's fixed budget — 1536 tokens on the reasoning tier. A bare "nope" therefore reached
-a thinking model with 1536 tokens and nothing concrete to think about, and roughly 1 turn
-in 6 burned the lot and returned empty content. A contentless denial does not need 1536
-tokens; it needs one sentence asking what the user thinks is wrong. Follow-ups now get
-384 (bare denial), 768 (stated dispute or continuation) or 1024 (correction, which
-re-works the whole problem with the new fact included).
+**A token cap is not a brevity control on a reasoning model**, and finding that out cost a
+regression worth recording.
+
+The budgets were reasoned from the reply: a dispute answer is two or three sentences, so
+it does not need 1536 tokens. That is true of the reply and irrelevant to the mechanism.
+A thinking model emits its `<think>` block *first* and the answer only after it, so a
+budget below what the reasoning needs does not produce a short answer — it produces **no
+answer at all**, and the request falls through to the exhaustion message.
+
+So the first version made the bug it was written to fix strictly worse. The original
+complaint was that roughly 1 dispute turn in 6 returned empty content; at 384 tokens
+essentially every dispute turn did, six consecutive `think produced no content in 384
+tokens` warnings in a single eval run. A grounded question that happened to route to
+`think` was starved the same way, and answered "I couldn't reach an answer I'd trust"
+while holding a computed 36.
+
+Measured floor, from the critic probe: at 256 tokens the 1.2B emits nothing at all, at
+512 it reaches an answer 2 times in 8, at 1024 6 times, at 2048 always. So on a thinking
+tier the plan does not shrink the budget — the tier default is the floor. Follow-up
+budgets of 384 / 768 / 1024 still apply on tiers that answer without a reasoning block,
+where they are safe. Brevity on the reasoning tier has to come from the prompt, which is
+what `DISPUTE_NOTE` does, or not at all.
+
+**The eval suite did not catch any of it, which is the more useful finding.** The
+exhaustion reply is a well-formed sentence, so it satisfies `regex: \w`, and it carries
+no forbidden number, so `not_number` passes too. Every dispute case scored 100% while
+every dispute turn was failing; the evidence was only in the server log. The runner now
+counts that reply across the whole run and says so loudly.
 
 Uncertainty is read off the routing **stage**, not off `confidence`. The confidences are
 not on a common scale — the embedding stage reports a raw cosine, the classifier a flat

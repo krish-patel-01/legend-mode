@@ -143,8 +143,21 @@ followed by a regeneration. So `verify_enabled` ships false. The machinery stays
 that conclusion is about this hardware and not about the idea: a second model that could
 judge in 2 s would flip it immediately.
 
-What did pay for itself, and is on by default: the per-effort token budgets, and the
-capitulation guard — which costs nothing at all, being a numeric comparison.
+*Per-effort token budgets are not a brevity control on a reasoning model.* This section
+originally called them the fix for the ~1-in-6 dispute turns that exhaust their budget.
+They made it worse. A thinking model emits its reasoning block first, so a budget below
+what that reasoning needs does not shorten the answer — it removes it, and essentially
+every dispute turn returned the exhaustion message instead of roughly one in six. The
+tier default is the floor on a thinking tier now, and the budgets apply only where a model
+answers without a reasoning block. Brevity there comes from the prompt or nowhere.
+
+Worse, the eval suite scored that regression as a clean run: the exhaustion reply is a
+well-formed sentence with no forbidden number in it, so `regex` and `not_number` both
+passed. It is now counted globally and reported.
+
+What did pay for itself, and is on by default: the capitulation guard — which costs
+nothing at all, being a numeric comparison — and the effort *levels*, which decide what
+gets adjudicated and what gets retrieved even where they no longer decide the budget.
 
 The rest of this section is the original design, kept because it explains the choices.
 
