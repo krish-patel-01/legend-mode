@@ -324,3 +324,12 @@ substitutes. Better to plan around that than to discover it at step 4.
 - **Prefer the cheaper move that produces the answer over the one that grades it.** At
   equal cost, escalating beats verifying, because verifying still leaves you needing an
   answer. This is what turned step 3 from a verification design into a budgeting one.
+- **This machine throttles ~30% under sustained load, so A-then-B timing is worthless.**
+  Three conclusions were drawn and discarded before this was found: that a stall was
+  eviction, that eviction was ruled out, and that a fourth resident tier caused an eval
+  median to go from 1.8 s to 11.9 s. Running the residency comparison in both orders
+  showed whichever config went *second* lost, every time. Reverse the order or interleave;
+  never read off totals from a sequential run.
+- **A measurement expires when the system changes.** "All three models co-reside" was
+  true, and adding a fourth tier made it false without anyone touching that code. Findings
+  need re-taking, not citing.

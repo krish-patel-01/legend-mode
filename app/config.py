@@ -21,25 +21,32 @@ class Settings(BaseSettings):
     models_file: Path = ROOT / "models.yaml"
     routes_file: Path = ROOT / "routes.yaml"
 
-    # Ollama keeps at most this many models resident. One slot per answering tier plus
-    # the embedder: embed + general + instruct + think = 4.
+    # Ollama keeps at most this many models resident. One slot per answering tier plus the
+    # embedder: embed + general + instruct + think = 4.
     #
-    # **This has to be set on the daemon, not here.** Nothing in this process can change
-    # a running Ollama's residency cap; `ollama_env` below exists to be exported by
-    # whoever starts `ollama serve`. If it is not, Ollama uses its own default, which on
-    # this machine held three models — enough until it wasn't.
+    # **This has to be set on the daemon, not here.** Nothing in this process can change a
+    # running Ollama's residency cap; `ollama_env` below exists to be exported by whoever
+    # starts `ollama serve`.
     #
-    # The history is worth keeping, because the same question got two correct answers at
-    # different times. It was originally 2, on the reasoning "the pinned tier occupies one
-    # slot", which undercounted: `general` and `embed` are *both* pinned. Then when a
-    # reasoning request stalled, eviction was the obvious suspect and was tested and ruled
-    # out — with three models defined, all three co-resided and a warm request was 0.4 s.
-    # That was true. Adding `instruct` as a fourth made it false: only one swap slot
-    # existed, `think` and `instruct` evicted each other on every alternation, and a full
-    # eval's median went from 1.8 s to 11.9 s.
+    # **The value barely matters, which took three wrong answers to establish.** It was
+    # first 2, on the reasoning "the pinned tier occupies one slot" — an undercount, since
+    # `general` and `embed` are both pinned. Then eviction was blamed for a stall, tested,
+    # and ruled out. Then adding `instruct` as a fourth tier was blamed for an eval median
+    # going 1.8 s -> 11.9 s, and the cap was raised to fix it.
     #
-    # So a residency measurement expires the moment a tier is added. Re-measure rather
-    # than trusting this comment.
+    # Measured properly, alternating chat and reasoning requests with the cap at 3 and at
+    # 4, back to back, in both orders:
+    #
+    #   3 then 4:   cap 3  49.9 s   |   cap 4  60.9 s
+    #   4 then 3:   cap 4  52.5 s   |   cap 3  71.6 s
+    #
+    # Whichever ran *second* lost, both times. Free memory was 2.5 GB in every run and
+    # reload time never exceeded 1.7 s total. There is no residency effect here at all:
+    # this laptop loses roughly 30% of its throughput under sustained load, and every
+    # comparison above was measuring the CPU getting hot.
+    #
+    # So 4 is kept because one slot per tier is the tidy default, not because it was
+    # measured to be faster. Lower it freely if RAM is tight.
     max_loaded_models: int = 4
 
     # Cap on cached routing decisions, keyed by prompt hash.

@@ -63,16 +63,11 @@ that would answer confidently about an image it never saw.
 
 ## Setup
 
-1. Make sure [Ollama](https://ollama.com) is installed and running, **with room for four
-   resident models**:
-   ```
-   OLLAMA_MAX_LOADED_MODELS=4 ollama serve
-   ```
-   One slot per answering tier plus the embedder. This is not optional once more than
-   one swapped tier exists: with the default cap, `think` and `instruct` evict each other
-   on every alternation, and a full eval's median latency went from 1.8 s to 11.9 s. On
-   Windows, `[Environment]::SetEnvironmentVariable("OLLAMA_MAX_LOADED_MODELS","4","User")`
-   and restart the daemon.
+1. Make sure [Ollama](https://ollama.com) is installed and running. Optionally give it a
+   slot per tier — `OLLAMA_MAX_LOADED_MODELS=4 ollama serve` — which keeps the embedder
+   and all three answering models resident. Measured, it makes no difference to speed
+   (see "A latency number here is worth less than you think" below); it just avoids
+   reloads if a session uses every tier.
 2. Install dependencies:
    ```
    uv sync
@@ -517,6 +512,36 @@ Two properties worth preserving if you extend it:
 
 `evals/baseline.json` holds the last accepted run; a normal run diffs against it and
 exits non-zero on any regression.
+
+## A latency number here is worth less than you think
+
+**This laptop loses roughly 30% of its throughput under sustained load**, and that fact
+invalidated three separate conclusions before it was found. Any timing comparison made by
+running A and then B is really measuring which one ran second.
+
+The controlled version — alternating chat and reasoning requests with Ollama's residency
+cap at 3 and at 4, back to back, in both orders:
+
+| order | first | second |
+|---|---|---|
+| 3 then 4 | cap 3 — **49.9 s** | cap 4 — 60.9 s |
+| 4 then 3 | cap 4 — **52.5 s** | cap 3 — 71.6 s |
+
+Whichever ran second lost, both times, by a similar margin. Free memory was 2.5 GB in
+every run and total reload time never exceeded 1.7 s, so neither pressure nor eviction
+explains it. Throughput also falls monotonically *within* a single run — 31.6 → 21.1 tok/s
+across six requests.
+
+What this means in practice:
+
+- **The eval suite's latency line is not a benchmark.** A full run takes tens of minutes,
+  so the later cases are measured on a hotter machine than the earlier ones. Successive
+  full runs reported medians of 1.8 s, 11.9 s and 18.7 s with no change that could account
+  for it. Pass rates are unaffected — those are content checks.
+- **Compare configurations by interleaving or reversing order**, never by running one
+  after the other and reading off the totals.
+- **Isolated, cold measurements are the fair ones.** A warm chat request on the 1.2B
+  instruct tier is 1.5–3 s; the 8.9 s the eval reported for the same case is throttling.
 
 ## Known limitations
 
