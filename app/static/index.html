@@ -5,437 +5,717 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Legend Mode</title>
 <style>
-  :root {
-    --bg: #0d0f14;
-    --panel: #171a21;
-    --panel-2: #1e222b;
-    --bubble-user: #26314a;
-    --bubble-assistant: #1c2029;
-    --border: #2a2f3a;
-    --text: #e6e8ec;
-    --muted: #8b93a3;
-    --accent: #6ea8fe;
-    --accent-2: #b78cf2;
-    --good: #4caf7d;
-    --warn: #e0a54c;
-    --bad: #e05c5c;
-    --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background:
-      radial-gradient(1200px 400px at 15% -10%, rgba(110,168,254,0.10), transparent),
-      radial-gradient(1000px 380px at 90% 0%, rgba(183,140,242,0.09), transparent),
-      var(--bg);
-    color: var(--text);
-    font: 14px/1.5 -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
-  }
-  header {
-    padding: 22px 28px 16px;
-    border-bottom: 1px solid var(--border);
-  }
-  header h1 {
-    margin: 0 0 3px;
-    font-size: 19px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-  }
-  header h1 .wordmark {
-    background: linear-gradient(90deg, var(--accent), var(--accent-2));
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
-  header p { margin: 0; color: var(--muted); font-size: 13px; }
-  main {
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 24px 28px 60px;
-  }
-  .card {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 18px 20px;
-    margin-bottom: 20px;
-  }
+/* ============================================================================
+   Legend Mode console.
 
-  /* --- chat --- */
-  #chatLog {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    max-height: 480px;
-    overflow-y: auto;
-    padding: 4px 2px 8px;
-  }
-  #chatLog:empty::before {
-    content: "👋 Ask me anything. A ~350M model reads it first and hands off to whichever specialist fits — you'll see exactly which one, and why.";
-    color: var(--muted);
-    font-style: italic;
-    display: block;
-    padding: 10px 2px;
-  }
-  .msg { display: flex; flex-direction: column; max-width: 82%; }
-  .msg.user { align-self: flex-end; align-items: flex-end; }
-  .msg.assistant { align-self: flex-start; align-items: flex-start; }
-  .bubble {
-    padding: 10px 14px;
-    border-radius: 14px;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .msg.user .bubble { background: var(--bubble-user); border-bottom-right-radius: 4px; }
-  .msg.assistant .bubble { background: var(--bubble-assistant); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
-  .bubble.pending { color: var(--muted); font-style: italic; }
-  .bubble.error { border-color: var(--bad); color: var(--bad); }
-  .tag {
-    margin-top: 5px;
-    font-size: 11.5px;
-    color: var(--muted);
-    font-family: var(--mono);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    cursor: default;
-  }
-  .tag .model-chip {
-    font-weight: 700;
-    color: var(--text);
-    background: var(--panel-2);
-    border-radius: 5px;
-    padding: 1px 7px;
-  }
-  .tag .stage-tiny {
-    padding: 1px 6px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    font-size: 10px;
-  }
-  .stage-rules, .stage-override { border-color: var(--good) !important; color: var(--good) !important; }
-  .stage-embed { border-color: var(--accent) !important; color: var(--accent) !important; }
-  .stage-classifier { border-color: var(--warn) !important; color: var(--warn) !important; }
-  .stage-cache { border-color: var(--muted) !important; color: var(--muted) !important; }
-  .stage-fallback { border-color: var(--bad) !important; color: var(--bad) !important; }
+   An instrument, not a chat app that happens to log things. The router makes a
+   decision per request across five stages, picks an effort level, maybe grounds
+   or retrieves, maybe adjudicates — and none of that is visible anywhere else.
+   The trace panel is the point; the chat is how you feed it.
 
-  /* --- composer --- */
-  .composer textarea {
-    width: 100%;
-    min-height: 60px;
-    resize: vertical;
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 12px;
-    font: inherit;
-  }
-  .composer-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 10px;
-    flex-wrap: wrap;
-  }
-  select, button {
-    font: inherit;
-    background: var(--panel-2);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    padding: 7px 12px;
-  }
-  button { cursor: pointer; border-color: var(--accent); color: var(--accent); font-weight: 600; }
-  button:hover { background: rgba(110, 168, 254, 0.12); }
-  button:disabled { opacity: 0.5; cursor: default; }
-  button.secondary { border-color: var(--border); color: var(--muted); font-weight: 500; }
-  .spacer { flex: 1; }
-  .hint { color: var(--muted); font-size: 12px; }
+   One file, no build step, no dependencies. It is served straight out of
+   app/static by the same process that answers the requests, which means there is
+   nothing to start, nothing to keep in sync, and it works with the network off.
 
-  /* --- last-decision detail panel --- */
-  .decision { display: none; }
-  .decision.show { display: block; }
-  .badge-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-  .model-badge {
-    font-family: var(--mono);
-    font-weight: 700;
-    font-size: 15px;
-    padding: 3px 10px;
-    border-radius: 6px;
-    background: var(--panel-2);
-  }
-  .stage-pill {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding: 3px 9px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    color: var(--muted);
-  }
-  .elapsed { color: var(--muted); font-family: var(--mono); font-size: 12px; }
-  .reason { margin: 4px 0 12px; }
-  .reason b { color: var(--text); }
-  .scores { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-  .score-row { display: grid; grid-template-columns: 90px 1fr 46px; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; }
-  .score-bar-track { background: var(--panel-2); border-radius: 4px; height: 8px; overflow: hidden; }
-  .score-bar-fill { height: 100%; background: var(--accent); }
-  .score-row.top .score-bar-fill { background: var(--good); }
+   Two things about this palette are functional rather than decorative:
+     - Route colour is meaning, not garnish. trivial / chat / think keep the same
+       hue everywhere they appear, so the history feed is scannable at a glance.
+     - Amber on near-black holds up at the contrast ratios this needs, and it is
+       the one accent that reads as "instrument" rather than "notification".
+   ============================================================================ */
 
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
-  td.prompt { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  td.model { font-family: var(--mono); }
-  tr.err td { color: var(--bad); }
-  .section-title { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-  .section-title h2 { margin: 0; font-size: 14px; }
-  .empty { color: var(--muted); padding: 10px 0; }
+:root {
+  --bg:         #0a0706;
+  --bg-raise:   #120d09;
+  --panel:      #150f0a;
+  --panel-2:    #1c140d;
+  --line:       #2e2118;
+  --line-hot:   #4a3117;
+
+  --amber:      #ff8a1e;
+  --amber-hi:   #ffb057;
+  --amber-dim:  #b35f0f;
+  --amber-ghost:rgba(255,138,30,0.10);
+
+  --text:       #f2e6da;
+  --text-2:     #c8b39c;
+  --text-mute:  #8a7663;
+
+  --ok:         #6fbf73;
+  --warn:       #e8b04b;
+  --bad:        #e0603f;
+
+  --route-trivial: #8a7663;
+  --route-chat:    #ffb057;
+  --route-think:   #ff6a1e;
+
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+  --sans: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 var(--sans);
+  overflow: hidden;
+}
+
+/* Faint grid + scanlines. Low enough to read as texture, never as pattern. */
+body::before {
+  content: "";
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    linear-gradient(rgba(255,138,30,0.030) 1px, transparent 1px) 0 0 / 100% 3px,
+    linear-gradient(90deg, rgba(255,138,30,0.020) 1px, transparent 1px) 0 0 / 46px 100%,
+    linear-gradient(rgba(255,138,30,0.020) 1px, transparent 1px) 0 0 / 100% 46px,
+    radial-gradient(1100px 520px at 12% -12%, rgba(255,106,30,0.10), transparent 70%),
+    radial-gradient(900px 460px at 105% 8%, rgba(255,138,30,0.06), transparent 70%);
+}
+
+/* ---------- shell ---------- */
+
+#app {
+  position: relative; z-index: 1;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 400px;
+  grid-template-areas: "hd hd" "main side";
+}
+
+/* ---------- header ---------- */
+
+header {
+  grid-area: hd;
+  display: flex; align-items: center; gap: 18px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255,138,30,0.05), transparent);
+}
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.reticle { width: 30px; height: 30px; flex: none; }
+.reticle .spin  { transform-origin: 50% 50%; animation: spin 9s linear infinite; }
+.reticle .spin2 { transform-origin: 50% 50%; animation: spin 6s linear infinite reverse; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.wordmark {
+  font-family: var(--mono);
+  font-size: 15px; font-weight: 600;
+  letter-spacing: 0.30em;
+  color: var(--amber-hi);
+  text-shadow: 0 0 18px rgba(255,138,30,0.35);
+  white-space: nowrap;
+}
+.tagline {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.13em;
+  color: var(--text-mute); text-transform: uppercase; white-space: nowrap;
+}
+
+.status { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.pill {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.09em;
+  text-transform: uppercase;
+  padding: 4px 9px;
+  border: 1px solid var(--line-hot);
+  color: var(--text-2);
+  background: var(--amber-ghost);
+  white-space: nowrap;
+}
+.pill b { color: var(--amber-hi); font-weight: 600; }
+.pill.down { border-color: #5a2a1c; color: var(--bad); background: rgba(224,96,63,0.08); }
+
+/* ---------- panels ---------- */
+
+.panel { position: relative; background: var(--panel); border: 1px solid var(--line); }
+/* Corner brackets — the one piece of pure decoration, kept to 1px so it reads as
+   a machined edge rather than a frame. */
+.panel::before, .panel::after {
+  content: ""; position: absolute; width: 9px; height: 9px; pointer-events: none;
+  border-color: var(--amber-dim); border-style: solid; border-width: 0;
+}
+.panel::before { top: -1px; left: -1px;  border-top-width: 1px; border-left-width: 1px; }
+.panel::after  { bottom: -1px; right: -1px; border-bottom-width: 1px; border-right-width: 1px; }
+
+.panel-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.17em;
+  text-transform: uppercase; color: var(--amber);
+}
+.panel-head .rule { flex: 1; height: 1px; background: linear-gradient(90deg, var(--line-hot), transparent); }
+.panel-head .count { color: var(--text-mute); letter-spacing: 0.08em; }
+
+/* ---------- main / chat ---------- */
+
+main {
+  grid-area: main;
+  display: grid; grid-template-rows: minmax(0,1fr) auto;
+  min-width: 0; min-height: 0;
+}
+
+#log {
+  overflow-y: auto;
+  padding: 22px 26px 8px;
+  display: flex; flex-direction: column; gap: 16px;
+  scroll-behavior: smooth;
+}
+
+.msg { display: flex; flex-direction: column; max-width: 78%; }
+.msg.user { align-self: flex-end; align-items: flex-end; }
+.msg.bot  { align-self: flex-start; }
+
+.msg .who {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--text-mute); margin-bottom: 5px;
+}
+.msg .body {
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  background: var(--bg-raise);
+  white-space: pre-wrap; word-wrap: break-word;
+}
+.msg.user .body { border-color: var(--line-hot); background: rgba(255,138,30,0.07); }
+.msg.bot .body  { border-left: 2px solid var(--tier, var(--amber-dim)); }
+
+.msg .foot {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 6px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+  color: var(--text-mute);
+}
+.msg .foot button {
+  font: inherit; letter-spacing: inherit;
+  background: none; border: 1px solid var(--line); color: var(--text-mute);
+  padding: 2px 7px; cursor: pointer;
+}
+.msg .foot button:hover { border-color: var(--amber-dim); color: var(--amber-hi); }
+.msg.selected .body { box-shadow: -3px 0 0 -1px var(--amber); }
+
+.tag {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em;
+  text-transform: uppercase; padding: 1px 6px;
+  border: 1px solid currentColor; opacity: 0.9;
+}
+.tag.trivial { color: var(--route-trivial); }
+.tag.chat    { color: var(--route-chat); }
+.tag.think   { color: var(--route-think); }
+
+.err { color: var(--bad); border-color: #5a2a1c !important; }
+
+/* thinking indicator */
+.working { display: flex; align-items: center; gap: 10px; color: var(--amber); font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; }
+.working .bars { display: inline-flex; gap: 3px; }
+.working .bars i { width: 3px; height: 13px; background: var(--amber); animation: pulse 1.05s ease-in-out infinite; }
+.working .bars i:nth-child(2) { animation-delay: .13s; }
+.working .bars i:nth-child(3) { animation-delay: .26s; }
+.working .bars i:nth-child(4) { animation-delay: .39s; }
+@keyframes pulse { 0%,100% { transform: scaleY(0.35); opacity: .45; } 50% { transform: scaleY(1); opacity: 1; } }
+
+/* ---------- composer ---------- */
+
+#composer { border-top: 1px solid var(--line); padding: 12px 26px 16px; background: linear-gradient(0deg, rgba(255,138,30,0.04), transparent); }
+.controls { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; flex-wrap: wrap; }
+label.ctl { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-mute); display: flex; align-items: center; gap: 6px; }
+select, textarea, button {
+  font-family: var(--mono); background: var(--bg-raise); color: var(--text);
+  border: 1px solid var(--line); border-radius: 0;
+}
+select { font-size: 11px; padding: 4px 6px; }
+select:focus, textarea:focus { outline: none; border-color: var(--amber-dim); }
+.row { display: flex; gap: 10px; align-items: stretch; }
+textarea {
+  flex: 1; resize: none; padding: 10px 12px; font-size: 13.5px; font-family: var(--sans);
+  min-height: 46px; max-height: 190px; line-height: 1.5;
+}
+button.act {
+  padding: 0 20px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
+  cursor: pointer; background: var(--amber-ghost); border-color: var(--line-hot); color: var(--amber-hi);
+  transition: background .12s, border-color .12s;
+}
+button.act:hover:not(:disabled) { background: rgba(255,138,30,0.20); border-color: var(--amber); }
+button.act:disabled { opacity: .38; cursor: default; }
+button.ghost { padding: 0 13px; font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer; color: var(--text-mute); }
+button.ghost:hover { color: var(--amber-hi); border-color: var(--amber-dim); }
+
+/* ---------- side ---------- */
+
+aside {
+  grid-area: side;
+  border-left: 1px solid var(--line);
+  display: grid; grid-template-rows: minmax(0,1.35fr) minmax(0,1fr);
+  min-height: 0; background: var(--bg);
+}
+.side-sec { display: grid; grid-template-rows: auto minmax(0,1fr); min-height: 0; }
+.side-sec + .side-sec { border-top: 1px solid var(--line); }
+.side-body { overflow-y: auto; padding: 14px 15px; }
+
+.empty { color: var(--text-mute); font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; line-height: 1.7; }
+
+/* cascade rail */
+.rail { margin: 0 0 16px; }
+.stage {
+  display: grid; grid-template-columns: 13px 1fr auto; align-items: center; gap: 9px;
+  padding: 4px 0; font-family: var(--mono); font-size: 11px;
+  color: var(--text-mute); letter-spacing: 0.07em;
+}
+.stage .dot { width: 7px; height: 7px; border: 1px solid currentColor; margin-left: 3px; }
+.stage.hit { color: var(--amber-hi); }
+.stage.hit .dot { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 9px var(--amber); }
+.stage.past { color: #6b5a49; }
+.stage .verdict { font-size: 10px; opacity: .85; }
+
+.kv { display: grid; grid-template-columns: 84px 1fr; gap: 5px 10px; font-family: var(--mono); font-size: 11px; margin-bottom: 14px; }
+.kv dt { color: var(--text-mute); letter-spacing: 0.08em; text-transform: uppercase; font-size: 10px; padding-top: 1px; }
+.kv dd { margin: 0; color: var(--text-2); word-break: break-word; }
+.kv dd.hi { color: var(--amber-hi); }
+
+.meter { height: 5px; background: var(--panel-2); border: 1px solid var(--line); margin-top: 5px; }
+.meter i { display: block; height: 100%; background: linear-gradient(90deg, var(--amber-dim), var(--amber)); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.chip {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+  padding: 3px 8px; border: 1px solid var(--line-hot); color: var(--text-2);
+  background: var(--amber-ghost);
+}
+.chip.on   { color: var(--amber-hi); border-color: var(--amber-dim); }
+.chip.warn { color: var(--warn); border-color: #5c4318; }
+.chip.off  { color: #6b5a49; border-color: var(--line); background: none; }
+
+.why {
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.65;
+  color: var(--text-mute); border-left: 1px solid var(--line-hot);
+  padding: 2px 0 2px 10px; margin-bottom: 14px;
+}
+
+/* history feed */
+.feed { display: flex; flex-direction: column; }
+.feed-row {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 9px; align-items: baseline;
+  padding: 6px 0; border-bottom: 1px solid rgba(46,33,24,0.6);
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-mute);
+}
+.feed-row .prompt { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #33241a; }
+::-webkit-scrollbar-thumb:hover { background: var(--line-hot); }
+
+@media (max-width: 1000px) {
+  #app { grid-template-columns: minmax(0,1fr); grid-template-areas: "hd" "main" "side"; grid-template-rows: auto minmax(0,1fr) minmax(0,320px); }
+  aside { border-left: none; border-top: 1px solid var(--line); }
+  .msg { max-width: 92%; }
+}
 </style>
 </head>
 <body>
+<div id="app">
 
-<header>
-  <h1>🐉 <span class="wordmark">Legend Mode</span></h1>
-  <p>A tiny router model reads every message and hands it to whichever specialist actually fits.</p>
-</header>
-
-<main>
-  <div class="card">
-    <div id="chatLog"></div>
-
-    <div class="composer">
-      <textarea id="prompt" placeholder="Say hi, ask it to prove something, or ask for the weather right now — watch who answers."></textarea>
-      <div class="composer-row">
-        <select id="policy">
-          <option value="auto">auto (let the router decide)</option>
-        </select>
-        <button id="previewBtn" class="secondary" type="button">Preview route only</button>
-        <button id="sendBtn" type="button">Send</button>
-        <button id="clearBtn" class="secondary" type="button">Clear conversation</button>
-        <span class="spacer"></span>
-        <span class="hint" id="status"></span>
+  <header>
+    <div class="brand">
+      <svg class="reticle" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <circle cx="20" cy="20" r="17" stroke="#4a3117" stroke-width="1"/>
+        <g class="spin">
+          <path d="M20 3 a17 17 0 0 1 14.7 8.5" stroke="#ff8a1e" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M20 37 a17 17 0 0 1 -14.7 -8.5" stroke="#ff8a1e" stroke-width="1.5" stroke-linecap="round"/>
+        </g>
+        <g class="spin2">
+          <circle cx="20" cy="20" r="10.5" stroke="#b35f0f" stroke-width="1" stroke-dasharray="4 6"/>
+        </g>
+        <circle cx="20" cy="20" r="3.2" fill="#ff8a1e"/>
+      </svg>
+      <div>
+        <div class="wordmark">LEGEND MODE</div>
+        <div class="tagline">local router &middot; two models &middot; cpu only</div>
       </div>
     </div>
-  </div>
+    <div class="status" id="status"></div>
+  </header>
 
-  <div class="card decision" id="decisionCard">
-    <div class="section-title"><h2>Last routing decision</h2></div>
-    <div class="badge-row">
-      <span class="model-badge" id="dModel"></span>
-      <span class="stage-pill" id="dStage"></span>
-      <span class="elapsed" id="dElapsed"></span>
+  <main>
+    <div id="log"></div>
+    <div id="composer">
+      <div class="controls">
+        <label class="ctl">effort
+          <select id="effort">
+            <option value="auto">auto</option>
+            <option value="fast">fast</option>
+            <option value="standard">standard</option>
+            <option value="careful">careful</option>
+          </select>
+        </label>
+        <label class="ctl">model
+          <select id="model"><option value="auto">auto</option></select>
+        </label>
+        <button class="ghost" id="preview" title="Route without generating (GET /route/debug)">preview route</button>
+        <button class="ghost" id="reset">new thread</button>
+      </div>
+      <div class="row">
+        <textarea id="input" rows="1" placeholder="Ask something.  Enter sends, Shift+Enter for a new line."></textarea>
+        <button class="act" id="send">send</button>
+      </div>
     </div>
-    <div class="reason">route: <b id="dRoute"></b> — <span id="dReason"></span></div>
-    <div class="scores" id="dScores"></div>
-  </div>
+  </main>
 
-  <div class="card">
-    <div class="section-title">
-      <h2>Recent requests</h2>
-      <span class="hint">— from every client hitting this server, newest first</span>
-    </div>
-    <div id="historyWrap"><div class="empty">No requests yet.</div></div>
-  </div>
-</main>
+  <aside>
+    <section class="side-sec panel" style="border:none">
+      <div class="panel-head">decision trace <span class="rule"></span><span class="count" id="traceWhen"></span></div>
+      <div class="side-body" id="trace">
+        <p class="empty">No decision yet.<br>Send a message, or use <b>preview route</b> to see the cascade resolve without spending a generation.</p>
+      </div>
+    </section>
+    <section class="side-sec">
+      <div class="panel-head">recent requests <span class="rule"></span><span class="count" id="histCount"></span></div>
+      <div class="side-body"><div class="feed" id="history"></div></div>
+    </section>
+  </aside>
+
+</div>
 
 <script>
-const $ = (id) => document.getElementById(id);
-const promptEl = $('prompt'), policyEl = $('policy'), statusEl = $('status');
-const decisionCard = $('decisionCard'), chatLog = $('chatLog');
+"use strict";
 
-const ROUTE_EMOJI = {
-  trivial: '⚡', chat: '💬', think: '🧠', tools: '🛠️', vision: '👁️',
-  forced: '🎯',
-};
-function emojiFor(route) { return ROUTE_EMOJI[route] || '🤖'; }
+const $ = (s) => document.querySelector(s);
+const log = $("#log"), input = $("#input"), sendBtn = $("#send");
 
-let conversation = []; // {role, content} — full turn history sent on every request
+/* Conversation state. `messages` is what gets POSTed — full history every turn, so
+   follow-ups have real context even though routing only reads the latest turn.
+   `traces` holds the x_legend_route for each assistant reply so any message can be
+   re-inspected later, not just the most recent one. */
+let messages = [];
+let traces = [];
+let busy = false;
 
-async function loadModels() {
+/* ---------- helpers ---------- */
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const ms = (n) => n == null ? "—" : n < 1000 ? Math.round(n) + "ms" : (n / 1000).toFixed(1) + "s";
+
+function routeClass(route) {
+  return ["trivial", "chat", "think"].includes(route) ? route : "chat";
+}
+
+/* ---------- status bar ---------- */
+
+async function refreshStatus() {
+  const bits = [];
   try {
-    const res = await fetch('/v1/models');
-    const data = await res.json();
-    for (const m of data.data) {
-      if (m.id.endsWith('-230m') || m.id === 'embed') continue; // internal, not a chat policy
-      const opt = document.createElement('option');
-      opt.value = m.id;
-      opt.textContent = m.id;
-      policyEl.appendChild(opt);
+    const models = await (await fetch("/v1/models")).json();
+    const sel = $("#model");
+    const have = new Set([...sel.options].map((o) => o.value));
+    for (const m of models.data || []) {
+      if (!have.has(m.id)) sel.add(new Option(m.id, m.id));
     }
-  } catch (e) { /* server not up yet */ }
-}
-
-function stageClass(stage) { return 'stage-' + stage; }
-
-function renderDecision(meta, scores) {
-  $('dModel').textContent = meta.model;
-  $('dStage').textContent = meta.stage;
-  $('dStage').className = 'stage-pill ' + stageClass(meta.stage);
-  $('dElapsed').textContent = meta.elapsed_ms.toFixed(1) + ' ms';
-  $('dRoute').textContent = meta.route;
-  $('dReason').textContent = meta.reason;
-
-  const scoresEl = $('dScores');
-  scoresEl.innerHTML = '';
-  const entries = Object.entries(scores || {}).sort((a, b) => b[1] - a[1]);
-  if (entries.length) {
-    const top = entries[0][0];
-    for (const [name, score] of entries) {
-      const row = document.createElement('div');
-      row.className = 'score-row' + (name === top ? ' top' : '');
-      const pct = Math.max(0, Math.min(100, (score + 1) / 2 * 100));
-      row.innerHTML = `<span>${name}</span>
-        <span class="score-bar-track"><span class="score-bar-fill" style="width:${pct}%"></span></span>
-        <span>${score.toFixed(2)}</span>`;
-      scoresEl.appendChild(row);
-    }
+    bits.push(`<span class="pill">tiers <b>${(models.data || []).length}</b></span>`);
+  } catch {
+    bits.push('<span class="pill down">server unreachable</span>');
+    $("#status").innerHTML = bits.join("");
+    return;
   }
-  decisionCard.classList.add('show');
-}
-
-function addBubble(role, text, opts = {}) {
-  const msg = document.createElement('div');
-  msg.className = 'msg ' + role;
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble' + (opts.pending ? ' pending' : '') + (opts.error ? ' error' : '');
-  bubble.textContent = text;
-  msg.appendChild(bubble);
-  if (opts.meta) {
-    const tag = document.createElement('div');
-    tag.className = 'tag';
-    tag.title = opts.meta.reason;
-    tag.innerHTML = `<span>${emojiFor(opts.meta.route)}</span>
-      <span class="model-chip">${opts.meta.model}</span>
-      <span class="stage-tiny ${stageClass(opts.meta.stage)}">${opts.meta.stage}</span>
-      <span>${opts.meta.elapsed_ms.toFixed(0)} ms</span>`;
-    msg.appendChild(tag);
-  }
-  chatLog.appendChild(msg);
-  chatLog.scrollTop = chatLog.scrollHeight;
-  return bubble;
-}
-
-async function previewRoute() {
-  const text = promptEl.value.trim();
-  if (!text) return;
-  statusEl.textContent = 'routing…';
   try {
-    const res = await fetch('/route/debug?prompt=' + encodeURIComponent(text));
-    const meta = await res.json();
-    renderDecision(meta, meta.scores);
-    statusEl.textContent = 'preview only — nothing was generated, conversation unchanged';
-  } catch (e) {
-    statusEl.textContent = 'error: ' + e;
-  }
+    const r = await (await fetch("/retrieval/status")).json();
+    bits.push(r.chunks
+      ? `<span class="pill">corpus <b>${r.chunks}</b> chunks &middot; &ge;${r.min_score}</span>`
+      : '<span class="pill">corpus <b>empty</b></span>');
+  } catch { /* retrieval is optional */ }
+  $("#status").innerHTML = bits.join("");
 }
 
-async function sendPrompt() {
-  const text = promptEl.value.trim();
-  if (!text) return;
-  promptEl.value = '';
-  $('sendBtn').disabled = true;
-  statusEl.textContent = 'thinking…';
+/* ---------- history feed ---------- */
 
-  addBubble('user', text);
-  conversation.push({ role: 'user', content: text });
-  const pending = addBubble('assistant', '…', { pending: true });
+async function refreshHistory() {
+  try {
+    const { entries } = await (await fetch("/route/history?limit=40")).json();
+    $("#histCount").textContent = entries.length ? entries.length : "";
+    $("#history").innerHTML = entries.length ? entries.map((e) => {
+      const d = e.decision || {};
+      return `<div class="feed-row">
+        <span class="tag ${routeClass(d.route)}">${esc(d.route || "?")}</span>
+        <span class="prompt" title="${esc(e.prompt)}">${esc(e.prompt || "")}</span>
+        <span>${d.elapsed_ms != null ? ms(d.elapsed_ms) : ""}</span>
+      </div>`;
+    }).join("") : '<p class="empty">Nothing yet.</p>';
+  } catch { /* non-fatal */ }
+}
+
+/* ---------- the trace panel ---------- */
+
+/* The cascade, in the order engine.route() actually tries them. Rendering all five
+   every time — rather than only the one that fired — is the point: what a decision
+   cost is as informative as what it decided. A `rules` hit is free; reaching
+   `classifier` means two stages already declined and a 350M guessed. */
+const STAGES = [
+  ["rules",      "regex signals"],
+  ["sticky",     "follow-up"],
+  ["cache",      "prompt hash"],
+  ["embed",      "bge centroids"],
+  ["classifier", "350M label"],
+  ["fallback",   "default route"],
+];
+
+function renderTrace(meta, whenLabel) {
+  if (!meta) return;
+  $("#traceWhen").textContent = whenLabel || "";
+
+  const stage = meta.stage;
+  const hitAt = STAGES.findIndex(([id]) => id === stage);
+  const rail = STAGES.map(([id, desc], i) => {
+    const cls = id === stage ? "hit" : (hitAt > -1 && i < hitAt ? "past" : "");
+    const verdict = id === stage ? "decided" : (cls === "past" ? "declined" : "");
+    return `<div class="stage ${cls}">
+      <span class="dot"></span>
+      <span>${id}<span style="opacity:.5"> &middot; ${desc}</span></span>
+      <span class="verdict">${verdict}</span>
+    </div>`;
+  }).join("");
+
+  const eff = meta.effort || {};
+  const budgetPct = Math.min(100, Math.round(((eff.max_tokens || 0) / 1536) * 100));
+
+  const chips = [];
+  chips.push(meta.grounded
+    ? `<span class="chip ${/corrected/.test(meta.grounded) ? "warn" : "on"}">grounded &middot; ${esc(meta.grounded)}</span>`
+    : '<span class="chip off">no grounding</span>');
+  chips.push(meta.followup
+    ? `<span class="chip on">follow-up &middot; ${esc(meta.followup)}</span>`
+    : '<span class="chip off">new turn</span>');
+  if (meta.retrieved && meta.retrieved.length) {
+    chips.push(`<span class="chip on">retrieved &middot; ${meta.retrieved.length}</span>`);
+  } else if (meta.retrieved) {
+    chips.push('<span class="chip off">corpus: no match</span>');
+  }
+  if (meta.adjudicated) {
+    const a = meta.adjudicated;
+    if (a.skipped) chips.push('<span class="chip warn">no critic available</span>');
+    if (a.verdict) chips.push(`<span class="chip ${a.repaired ? "warn" : "on"}">adjudicated &middot; ${esc(a.verdict)}${a.repaired ? " &middot; repaired" : ""}</span>`);
+  }
+
+  const cites = (meta.retrieved && meta.retrieved.length)
+    ? `<dl class="kv"><dt>sources</dt><dd>${meta.retrieved.map(esc).join("<br>")}</dd></dl>` : "";
+
+  $("#trace").innerHTML = `
+    <div class="rail">${rail}</div>
+    <dl class="kv">
+      <dt>route</dt><dd class="hi">${esc(meta.route)} &rarr; ${esc(meta.model || "?")}</dd>
+      <dt>confidence</dt><dd>${meta.confidence != null ? meta.confidence.toFixed(2) : "—"}</dd>
+      <dt>routing</dt><dd>${ms(meta.elapsed_ms)}</dd>
+    </dl>
+    <div class="why">${esc(meta.reason || "")}</div>
+    <dl class="kv">
+      <dt>effort</dt><dd class="hi">${esc(eff.level || "—")}</dd>
+      <dt>budget</dt><dd>${eff.max_tokens != null ? eff.max_tokens + " tokens" : "—"}
+        <div class="meter"><i style="width:${budgetPct}%"></i></div></dd>
+    </dl>
+    ${eff.why ? `<div class="why">${esc(eff.why)}</div>` : ""}
+    <div class="chips">${chips.join("")}</div>
+    ${cites}`;
+}
+
+function selectMessage(idx) {
+  document.querySelectorAll(".msg.bot").forEach((n) => n.classList.remove("selected"));
+  const node = document.querySelector(`.msg.bot[data-idx="${idx}"]`);
+  if (node) node.classList.add("selected");
+  renderTrace(traces[idx], "turn " + (idx + 1));
+}
+
+/* ---------- rendering messages ---------- */
+
+function addUser(text) {
+  const el = document.createElement("div");
+  el.className = "msg user";
+  el.innerHTML = `<div class="who">you</div><div class="body">${esc(text)}</div>`;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+  return el;
+}
+
+/* A failed turn is rolled out of `messages` so the next request doesn't carry a
+   question that was never answered — but the bubble stays on screen, so it has to say
+   so. Without this the visible transcript and the state silently disagree. */
+function markUnsent(el) {
+  if (!el) return;
+  el.style.opacity = "0.5";
+  const who = el.querySelector(".who");
+  if (who) who.innerHTML = 'you &middot; <span style="color:var(--bad)">not sent</span>';
+}
+
+function addBot() {
+  const idx = traces.length;
+  traces.push(null);
+  const el = document.createElement("div");
+  el.className = "msg bot";
+  el.dataset.idx = idx;
+  el.innerHTML = `<div class="who">assistant</div>
+    <div class="body"><span class="working"><span class="bars"><i></i><i></i><i></i><i></i></span>
+    <span class="elapsed">routing</span></span></div>
+    <div class="foot"></div>`;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+
+  // A live timer, because the reasoning tier routinely takes 30–300 s. Without it a
+  // working server is indistinguishable from a hung one, and that is the single most
+  // important thing this console has to communicate.
+  const started = performance.now();
+  const tick = setInterval(() => {
+    const s = el.querySelector(".elapsed");
+    if (s) s.textContent = ((performance.now() - started) / 1000).toFixed(1) + "s";
+  }, 100);
+
+  return {
+    idx, el,
+    stopTimer: () => clearInterval(tick),
+    setText(text) {
+      const body = el.querySelector(".body");
+      body.textContent = text;
+      log.scrollTop = log.scrollHeight;
+    },
+    fail(msg) {
+      clearInterval(tick);
+      const body = el.querySelector(".body");
+      body.classList.add("err");
+      body.textContent = msg;
+    },
+    finish(meta, elapsed) {
+      clearInterval(tick);
+      traces[idx] = meta;
+      const foot = el.querySelector(".foot");
+      if (!meta) { foot.textContent = ""; return; }
+      el.style.setProperty("--tier", `var(--route-${routeClass(meta.route)})`);
+      const eff = meta.effort || {};
+      foot.innerHTML =
+        `<span class="tag ${routeClass(meta.route)}">${esc(meta.route)}</span>` +
+        `<span>${esc(meta.model || "")}</span>` +
+        `<span>&middot; ${esc(eff.level || "")}</span>` +
+        `<span>&middot; ${(elapsed / 1000).toFixed(1)}s</span>` +
+        (meta.grounded ? `<span>&middot; ${esc(meta.grounded)}</span>` : "") +
+        `<button type="button">trace</button>`;
+      foot.querySelector("button").onclick = () => selectMessage(idx);
+      selectMessage(idx);
+    },
+  };
+}
+
+/* ---------- sending ---------- */
+
+async function send() {
+  const text = input.value.trim();
+  if (!text || busy) return;
+
+  busy = true; sendBtn.disabled = true;
+  input.value = ""; input.style.height = "auto";
+
+  const userEl = addUser(text);
+  messages.push({ role: "user", content: text });
+  const bot = addBot();
+  const started = performance.now();
+
+  const body = { model: $("#model").value, messages, stream: true };
+  const effort = $("#effort").value;
+  if (effort !== "auto") body.effort = effort;
 
   try {
-    const res = await fetch('/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: policyEl.value, messages: conversation }),
+    const resp = await fetch("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
-    const data = await res.json();
-    if (!res.ok) {
-      pending.textContent = data.detail || JSON.stringify(data);
-      pending.classList.add('error');
-      pending.classList.remove('pending');
-      statusEl.textContent = 'request failed';
+
+    if (!resp.ok) {
+      let detail = `HTTP ${resp.status}`;
+      try { detail = (await resp.json()).detail || detail; } catch {}
+      bot.fail(detail);
+      messages.pop();
+      markUnsent(userEl);
       return;
     }
-    const meta = data.x_legend_route;
-    renderDecision(meta, meta.scores);
-    const content = data.choices?.[0]?.message?.content || '(empty response)';
-    conversation.push({ role: 'assistant', content });
 
-    pending.textContent = content;
-    pending.classList.remove('pending');
-    const tag = document.createElement('div');
-    tag.className = 'tag';
-    tag.title = meta.reason;
-    tag.innerHTML = `<span>${emojiFor(meta.route)}</span>
-      <span class="model-chip">${meta.model}</span>
-      <span class="stage-tiny ${stageClass(meta.stage)}">${meta.stage}</span>
-      <span>${meta.elapsed_ms.toFixed(0)} ms</span>`;
-    pending.parentElement.appendChild(tag);
+    // SSE. Note the server generates the whole reply up front when adjudication is
+    // planned — an answer that might be replaced should not be streamed and then
+    // retracted — so this may legitimately receive one large chunk rather than tokens.
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buffer = "", answer = "", meta = null;
 
-    statusEl.textContent = `done — ${data.usage?.completion_tokens ?? '?'} tokens`;
-    loadHistory();
-  } catch (e) {
-    pending.textContent = 'network error: ' + e;
-    pending.classList.add('error');
-    pending.classList.remove('pending');
-    statusEl.textContent = 'request failed';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += dec.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        let chunk;
+        try { chunk = JSON.parse(payload); } catch { continue; }
+        if (chunk.error) { bot.fail(chunk.error.message || "upstream error"); return; }
+        const delta = chunk.choices?.[0]?.delta || {};
+        if (delta.content) { answer += delta.content; bot.setText(answer); }
+        if (chunk.x_legend_route) meta = chunk.x_legend_route;
+      }
+    }
+
+    if (!answer) bot.setText("(empty reply)");
+    messages.push({ role: "assistant", content: answer });
+    bot.finish(meta, performance.now() - started);
+  } catch (err) {
+    bot.fail(String(err && err.message ? err.message : err));
+    messages.pop();
+    markUnsent(userEl);
   } finally {
-    $('sendBtn').disabled = false;
-    promptEl.focus();
+    bot.stopTimer();
+    busy = false; sendBtn.disabled = false;
+    input.focus();
+    refreshHistory();
   }
 }
 
-function clearConversation() {
-  conversation = [];
-  chatLog.innerHTML = '';
-  statusEl.textContent = 'conversation cleared';
-}
+/* ---------- route preview ---------- */
 
-function fmtTime(ts) {
-  const d = new Date(ts * 1000);
-  return d.toLocaleTimeString();
-}
-
-async function loadHistory() {
+async function preview() {
+  const text = input.value.trim();
+  if (!text) { input.focus(); return; }
+  $("#trace").innerHTML = '<p class="empty">Resolving…</p>';
   try {
-    const res = await fetch('/route/history?limit=50');
-    const data = await res.json();
-    const wrap = $('historyWrap');
-    if (!data.entries.length) {
-      wrap.innerHTML = '<div class="empty">No requests yet.</div>';
-      return;
-    }
-    const rows = data.entries.map(e => `
-      <tr class="${e.error ? 'err' : ''}">
-        <td>${fmtTime(e.ts)}</td>
-        <td class="prompt" title="${e.prompt.replace(/"/g, '&quot;')}">${emojiFor(e.route)} ${e.prompt || '(empty)'}</td>
-        <td class="model">${e.model}</td>
-        <td>${e.stage}</td>
-        <td>${e.reason}</td>
-        <td>${e.error ? 'error' : (e.completion_tokens ?? '—')}</td>
-        <td>${e.elapsed_ms.toFixed(1)} ms</td>
-      </tr>`).join('');
-    wrap.innerHTML = `<table>
-      <thead><tr><th>time</th><th>prompt</th><th>model</th><th>stage</th><th>reason</th><th>tokens</th><th>route time</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-  } catch (e) { /* transient */ }
+    const meta = await (await fetch("/route/debug?prompt=" + encodeURIComponent(text))).json();
+    renderTrace(meta, "preview");
+  } catch (err) {
+    $("#trace").innerHTML = `<p class="empty">Preview failed: ${esc(err.message)}</p>`;
+  }
 }
 
-$('previewBtn').addEventListener('click', previewRoute);
-$('sendBtn').addEventListener('click', sendPrompt);
-$('clearBtn').addEventListener('click', clearConversation);
-promptEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
+/* ---------- wiring ---------- */
+
+sendBtn.onclick = send;
+$("#preview").onclick = preview;
+$("#reset").onclick = () => {
+  messages = []; traces = [];
+  log.innerHTML = "";
+  $("#trace").innerHTML = '<p class="empty">New thread. Nothing decided yet.</p>';
+  $("#traceWhen").textContent = "";
+  input.focus();
+};
+
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+input.addEventListener("input", () => {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 190) + "px";
 });
 
-loadModels();
-loadHistory();
-setInterval(loadHistory, 4000);
+refreshStatus();
+refreshHistory();
+setInterval(refreshHistory, 8000);
+input.focus();
 </script>
 </body>
 </html>
