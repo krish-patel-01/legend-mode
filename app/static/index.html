@@ -150,6 +150,19 @@ header {
 .panel-head .rule { flex: 1; height: 1px; background: linear-gradient(90deg, var(--line-hot), transparent); }
 .panel-head .count { color: var(--text-mute); letter-spacing: 0.08em; }
 
+/* A collapsible section header. The caret is the affordance, so the whole strip is the
+   hit target rather than a small button. */
+.panel-head.toggle { cursor: pointer; user-select: none; }
+.panel-head.toggle:hover { color: var(--amber-hi); }
+.caret {
+  font-size: 9px; line-height: 1; color: var(--amber-dim);
+  transition: transform .15s ease-out; transform-origin: 50% 50%;
+}
+.side-sec.collapsed .caret { transform: rotate(-90deg); }
+.side-sec.collapsed .side-body { display: none; }
+/* Collapsed, the section shrinks to its header and the trace takes the freed space. */
+aside.hist-collapsed { grid-template-rows: minmax(0,1fr) auto; }
+
 /* ---------- main / chat ---------- */
 
 main {
@@ -388,8 +401,11 @@ aside {
         <p class="empty">No decision yet.<br>Send a message, or use <b>preview route</b> to see the cascade resolve without spending a generation.</p>
       </div>
     </section>
-    <section class="side-sec">
-      <div class="panel-head">recent requests <span class="rule"></span><span class="count" id="histCount"></span></div>
+    <section class="side-sec" id="histSec">
+      <div class="panel-head toggle" id="histToggle" title="Show or hide recent requests">
+        <span class="caret">&#9660;</span>recent requests
+        <span class="rule"></span><span class="count" id="histCount"></span>
+      </div>
       <div class="side-body"><div class="feed" id="history"></div></div>
     </section>
   </aside>
@@ -449,7 +465,19 @@ async function refreshStatus() {
 
 /* ---------- history feed ---------- */
 
+/* Collapsed by default and remembered, because the feed is a thing you go and look at
+   rather than something worth a permanent third of the sidebar. Polling stops while it
+   is hidden — there is no point spending a request every 8 s on a list nobody can see. */
+const HIST_KEY = "legendmode.history.collapsed";
+let histCollapsed = localStorage.getItem(HIST_KEY) !== "0";
+
+function applyHistCollapsed() {
+  $("#histSec").classList.toggle("collapsed", histCollapsed);
+  document.querySelector("aside").classList.toggle("hist-collapsed", histCollapsed);
+}
+
 async function refreshHistory() {
+  if (histCollapsed) return;
   try {
     const { entries } = await (await fetch("/route/history?limit=40")).json();
     $("#histCount").textContent = entries.length ? entries.length : "";
@@ -719,6 +747,13 @@ $("#preview").onclick = preview;
 
 const aside = document.querySelector("aside");
 $("#drawerToggle").onclick = () => aside.classList.toggle("open");
+
+$("#histToggle").onclick = () => {
+  histCollapsed = !histCollapsed;
+  localStorage.setItem(HIST_KEY, histCollapsed ? "1" : "0");
+  applyHistCollapsed();
+  if (!histCollapsed) refreshHistory();  // it went stale while hidden
+};
 // Opening the trace should follow from asking for a trace, so the drawer opens itself
 // when one is rendered. Only matters under the breakpoint; above it the class is inert.
 const openDrawer = () => aside.classList.add("open");
@@ -738,6 +773,7 @@ input.addEventListener("input", () => {
   input.style.height = Math.min(input.scrollHeight, 190) + "px";
 });
 
+applyHistCollapsed();
 refreshStatus();
 refreshHistory();
 setInterval(refreshHistory, 8000);
