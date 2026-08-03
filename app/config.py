@@ -21,19 +21,26 @@ class Settings(BaseSettings):
     models_file: Path = ROOT / "models.yaml"
     routes_file: Path = ROOT / "routes.yaml"
 
-    # Ollama keeps at most this many models resident.
+    # Ollama keeps at most this many models resident. One slot per answering tier plus
+    # the embedder: embed + general + instruct + think = 4.
     #
-    # This said 2, with the reasoning "the pinned tier occupies one slot permanently, so 2
-    # means pinned + one swapped model". The arithmetic was off by one: *two* models are
-    # pinned, `general` and `embed`, so 2 leaves no room for a swapped tier at all and the
-    # reasoning model can only ever be resident by evicting a pinned one.
+    # **This has to be set on the daemon, not here.** Nothing in this process can change
+    # a running Ollama's residency cap; `ollama_env` below exists to be exported by
+    # whoever starts `ollama serve`. If it is not, Ollama uses its own default, which on
+    # this machine held three models — enough until it wasn't.
     #
-    # Note this is advisory. Nothing here applies it to the daemon — `ollama_env` below
-    # exists to be exported by whoever starts `ollama serve`, and if that never happens
-    # Ollama uses its own default. Measured on this machine with the variable unset, all
-    # three models co-reside happily and a warm reasoning request is 0.4 s, so the default
-    # is not currently the binding constraint. Set it if residency ever starts churning.
-    max_loaded_models: int = 3
+    # The history is worth keeping, because the same question got two correct answers at
+    # different times. It was originally 2, on the reasoning "the pinned tier occupies one
+    # slot", which undercounted: `general` and `embed` are *both* pinned. Then when a
+    # reasoning request stalled, eviction was the obvious suspect and was tested and ruled
+    # out — with three models defined, all three co-resided and a warm request was 0.4 s.
+    # That was true. Adding `instruct` as a fourth made it false: only one swap slot
+    # existed, `think` and `instruct` evicted each other on every alternation, and a full
+    # eval's median went from 1.8 s to 11.9 s.
+    #
+    # So a residency measurement expires the moment a tier is added. Re-measure rather
+    # than trusting this comment.
+    max_loaded_models: int = 4
 
     # Cap on cached routing decisions, keyed by prompt hash.
     decision_cache_size: int = 512

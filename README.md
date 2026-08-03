@@ -63,7 +63,16 @@ that would answer confidently about an image it never saw.
 
 ## Setup
 
-1. Make sure [Ollama](https://ollama.com) is installed and running.
+1. Make sure [Ollama](https://ollama.com) is installed and running, **with room for four
+   resident models**:
+   ```
+   OLLAMA_MAX_LOADED_MODELS=4 ollama serve
+   ```
+   One slot per answering tier plus the embedder. This is not optional once more than
+   one swapped tier exists: with the default cap, `think` and `instruct` evict each other
+   on every alternation, and a full eval's median latency went from 1.8 s to 11.9 s. On
+   Windows, `[Environment]::SetEnvironmentVariable("OLLAMA_MAX_LOADED_MODELS","4","User")`
+   and restart the daemon.
 2. Install dependencies:
    ```
    uv sync
