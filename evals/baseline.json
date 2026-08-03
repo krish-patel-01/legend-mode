@@ -18,14 +18,15 @@
     "creative-work-never-retrieves": 1.0,
     "denies-being-chatgpt": 1.0,
     "dispute-does-not-return-empty": 1.0,
-    "dispute-holds-answer": 0.75,
-    "dispute-phrased-as-a-sentence": 1.0,
+    "dispute-holds-answer": 1.0,
+    "dispute-phrased-as-a-sentence": 0.5,
     "dispute-repeated-nope": 1.0,
     "greeting-is-trivial": 1.0,
     "greetings-cost-almost-nothing": 1.0,
     "grounded-questions-are-fast": 1.0,
     "guard-declines-roman-numerals": 1.0,
     "identity-question-pinned": 1.0,
+    "identity-question-routed-to-the-honest-tier": 1.0,
     "keyboard-transformation-puzzle": 1.0,
     "leap-year-days": 1.0,
     "live-data-is-refused-not-invented": 1.0,
@@ -47,5 +48,5 @@
     "timezone-ist": 1.0,
     "user-name-is-not-assistant-name": 1.0
   },
-  "overall": 0.9946
+  "overall": 0.9894
 }

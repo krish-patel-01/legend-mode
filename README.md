@@ -220,9 +220,18 @@ reply is replaced with the guard's own sentence. That is sound precisely because
 comparison is numeric and exact — a provably wrong number swapped for a provably right
 one, never prose judging prose.
 
-Measured over 54 samples after the change, the `computable` category passes 100%, and
-**19% of grounded samples needed correcting** — that rate is reported by the eval runner
-and is a direct measure of how often the answering tier ignores a value it was handed.
+The correction rate is a direct measure of how often the answering tier ignores a value it
+was handed, and it is reported by the eval runner every run. It moved with the model:
+
+| chat tier | grounded samples needing correction |
+|---|---|
+| LFM2.5-350M | **23%** |
+| LFM2.5-1.2B-Instruct (Q4) | 8% |
+| LFM2.5-1.2B-Instruct (UD-Q3) | **0%** |
+
+`computable` passes 100% throughout. The substitution stays regardless — a rate that is
+zero on one model and a quarter on another is exactly the kind of thing that should not be
+load-bearing — but it is now catching almost nothing, which is the point.
 
 Which guard fired shows up as `grounded` in `x_legend_route`, suffixed `(corrected)` when
 the substitution ran.
