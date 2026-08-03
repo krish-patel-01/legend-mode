@@ -145,6 +145,15 @@ _CORRECTION = re.compile(
 )
 
 
+def is_self_identity(text: str) -> bool:
+    """Whether this asks about the assistant itself.
+
+    Exposed because app/effort.py needs the same answer for a different reason: an
+    identity question is never improved by retrieving a document, whatever its shape.
+    """
+    return bool(_SELF_IDENTITY.search(text))
+
+
 def followup_kind(text: str, message_count: int = 0) -> str | None:
     """Classify a short reply as a follow-up to the previous turn, or None.
 

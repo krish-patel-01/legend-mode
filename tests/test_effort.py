@@ -248,6 +248,20 @@ def test_non_lookups_stay_shut(text):
     assert not effort.wants_retrieval(text)
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["what model are you", "who are you", "what are you", "who made you",
+     "what llm are you", "what is your name"],
+)
+def test_identity_questions_never_retrieve(text):
+    """A lookup by shape, a question about the assistant in fact. The corpus is this
+    project's own docs, so retrieval handed the model a page describing the tiers and it
+    answered "LFM2.5-350M" — reading someone else's identity out of a document and
+    reporting it as its own. On the auto route the hit escalated to the reading tier,
+    which then spent its budget and returned the abstention message."""
+    assert not effort.wants_retrieval(text)
+
+
 def test_a_very_long_prompt_does_not_trigger_retrieval():
     """Past a few hundred characters the prompt carries its own context, and embedding
     it whole retrieves against an average of several topics rather than one."""

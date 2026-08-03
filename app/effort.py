@@ -33,6 +33,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from app.router import rules
 from app.router.types import RouteDecision
 
 Level = Literal["fast", "standard", "careful"]
@@ -305,6 +306,16 @@ def wants_retrieval(text: str) -> bool:
     """
     stripped = text.strip()
     if not stripped or len(stripped) > 400:
+        return False
+    # "what model are you" is a lookup by shape and a question about the assistant in
+    # fact, and the corpus is this project's own documentation — so retrieval handed the
+    # model a page describing the tiers and it answered "LFM2.5-350M", reading someone
+    # else's identity out of a document and reporting it as its own. On the auto route it
+    # was worse: the hit escalated to the reading tier, which spent its budget and
+    # returned the abstention message to "what model are you".
+    #
+    # Nothing about the assistant's own identity is ever answered better from a document.
+    if rules.is_self_identity(stripped):
         return False
     if _NOT_LOOKUP.search(stripped):
         return False
