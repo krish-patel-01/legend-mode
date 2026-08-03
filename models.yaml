@@ -98,6 +98,34 @@ models:
     top_k: 40
     repeat_penalty: 1.1
 
+  # Candidate replacement for the 350M's *chat* role — not its classifier role, where
+  # 71.8 tok/s is the whole point and quality barely matters.
+  #
+  # The 350M's conversational failures are not prompt-fixable. Replaying one real
+  # transcript it invented a maker outright ("developed by NLP research team at Stanford
+  # University"), answered "what am I?" with "You're asking about myself", and echoed
+  # "Nope" back twice in a row. That is a capability floor, not a wording problem.
+  #
+  # This is the *Instruct* build, deliberately, not the Thinking one with reasoning
+  # turned off — Ollama advertises a `thinking` capability for the Thinking GGUF but
+  # `think: false` does not actually suppress the block, verified against the daemon. A
+  # model trained to reason first is not the same thing as one trained to answer first.
+  #
+  # Not wired into routes.yaml yet, so nothing routes here until the comparison says it
+  # should. Reachable meanwhile with an explicit {"model": "instruct"}.
+  - alias: instruct
+    tier: instruct
+    repo: unsloth/LFM2.5-1.2B-Instruct-GGUF
+    file: LFM2.5-1.2B-Instruct-Q4_K_M.gguf
+    glob:
+      - "**/LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+    keep_alive: 5m
+    default_max_tokens: 512
+    temperature: 0.6
+    top_p: 0.9
+    top_k: 40
+    repeat_penalty: 1.1
+
   # --- Parked. Weights stay on disk (and `legend/small` is still tagged in Ollama),
   # so uncommenting an entry and re-running scripts/import_models.py brings it back.
   # Anything restored here also needs its route re-added to routes.yaml, which no
