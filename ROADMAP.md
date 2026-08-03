@@ -123,18 +123,23 @@ substituting self-verification, which the envelope above already calls worthless
 *Verification is dominated by escalation.* The critic was re-measured over 8 pairs, and
 the number that mattered was not accuracy:
 
-| Critic config | Accuracy | Verdict emitted | Wrong answers waved through | Median |
+| Critic budget | Accuracy | Verdict emitted | Wrong answers waved through | Median |
 |---|---|---|---|---|
-| thinking off, 64 tokens | 38% | 7/8 | **4/4** | 7.4 s |
-| thinking off, 192 tokens | 50% | 8/8 | **4/4** | 21.4 s |
-| thinking on, 512 tokens | 25% | **2/8** | 0/4 | 45.1 s |
-| thinking on, 1024 tokens | 75% | 6/8 | 0/4 | 24.9 s |
-| thinking on, 2048 tokens | **88%** | 8/8 | 1/4 | 26.7 s |
+| 512 tokens | 25% | **2/8** | 0/4 | 45.1 s |
+| 1024 tokens | 75% | 6/8 | 0/4 | 24.9 s |
+| 2048 tokens | **88%** | 8/8 | 1/4 | 26.7 s |
 
-Turning the reasoning block off does not buy a cheap critic, it buys the 350M's
-behaviour. And 512 tokens — the budget the first implementation shipped with — is below
-the floor where a verdict is emitted at all: it returns "unsure" on 6 of 8 and charges 45
-seconds, which from outside looks exactly like a working verifier that never fires.
+512 tokens — the budget the first implementation shipped with — is below the floor where a
+verdict is emitted at all: it returns "unsure" on 6 of 8 and charges 45 seconds, which
+from outside looks exactly like a working verifier that never fires.
+
+Two "reasoning off" rows were struck from this table after the fact. They appeared to show
+that disabling the reasoning block bought the 350M's rubber-stamping behaviour, and the
+premise was false: Ollama advertises a `thinking` capability for this model but
+`think: false` does not suppress the block, so those rows measured a truncated reasoning
+block and a parser scraping a verdict out of it. Same failure as the original critic
+harness bug, one layer up. Whether a genuinely non-reasoning 1.2B behaves that way is
+still an open question, and answering it needs the instruct build, not a flag.
 
 At the budget where it works, verification costs 26.7 s. Answering the same question on
 the 1.2B costs about 25 s and yields a better answer instead of a grade on a worse one,

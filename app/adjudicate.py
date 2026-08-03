@@ -79,16 +79,26 @@ _CRITIC_SYSTEM = (
 # spends the whole budget in the <think> block and never reaches the verdict. Over 8
 # question/answer pairs (4 right, 4 wrong):
 #
-#   think off, 64 tokens    38% accurate, 4/4 wrong answers waved through,   7.4 s
-#   think off, 192 tokens   50% accurate, 4/4 wrong answers waved through,  21.4 s
-#   think on,  512 tokens   25% accurate, verdict emitted on only 2 of 8,   45.1 s
-#   think on, 1024 tokens   75% accurate, verdict emitted on 6 of 8,        24.9 s
-#   think on, 2048 tokens   88% accurate, verdict emitted on 8 of 8,        26.7 s
+#   512 tokens    25% accurate, verdict emitted on only 2 of 8,   45.1 s
+#   1024 tokens   75% accurate, verdict emitted on 6 of 8,        24.9 s
+#   2048 tokens   88% accurate, verdict emitted on 8 of 8,        26.7 s
 #
-# Two things follow. Turning reasoning off does not buy a cheap critic — it buys the
-# 350M's behaviour, waving through every wrong answer. And a budget that looks generous
-# can be below the floor: 512 tokens produced "unsure" on 6 of 8 pairs and charged 45 s
-# for it, which reads exactly like a working verifier that never fires.
+# A budget that looks generous can sit below the floor: 512 tokens produced "unsure" on 6
+# of 8 pairs and charged 45 s for it, which from outside is indistinguishable from a
+# working verifier that never fires.
+#
+# **Two further rows have been struck, and the reason is worth keeping.** The same probe
+# also ran "reasoning off, 64 tokens" and "reasoning off, 192 tokens", and both waved
+# through 4 of 4 wrong answers — which was written up as "turning reasoning off buys the
+# 350M's behaviour". That conclusion was not supported. Ollama advertises a `thinking`
+# capability for this model but **`think: false` does not suppress the block** — verified
+# directly, the <think> block is emitted either way. So those rows measured a *truncated*
+# reasoning block, not a disabled one, and `parse_verdict`'s fallback then scraped a
+# verdict word out of the reasoning itself.
+#
+# Which is precisely the failure this module's docstring already warns about, reappearing
+# in the measurement harness instead of the parser. Reading a <think> block as a verdict
+# has now produced a wrong conclusion twice in this project.
 _CRITIC_MAX_TOKENS = 2048
 
 

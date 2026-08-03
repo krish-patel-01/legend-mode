@@ -307,19 +307,28 @@ self-verification.
 **It is off by default, and that is a measurement, not a default nobody revisited.** The
 critic was measured over 8 question/answer pairs, 4 right and 4 wrong:
 
-| Critic config | Accuracy | Verdict emitted | Wrong answers waved through | Median |
+| Critic budget | Accuracy | Verdict emitted | Wrong answers waved through | Median |
 |---|---|---|---|---|
-| thinking off, 64 tokens | 38% | 7/8 | **4/4** | 7.4 s |
-| thinking off, 192 tokens | 50% | 8/8 | **4/4** | 21.4 s |
-| thinking on, 512 tokens | 25% | **2/8** | 0/4 | 45.1 s |
-| thinking on, 1024 tokens | 75% | 6/8 | 0/4 | 24.9 s |
-| thinking on, 2048 tokens | **88%** | 8/8 | 1/4 | 26.7 s |
+| 512 tokens | 25% | **2/8** | 0/4 | 45.1 s |
+| 1024 tokens | 75% | 6/8 | 0/4 | 24.9 s |
+| 2048 tokens | **88%** | 8/8 | 1/4 | 26.7 s |
 
-Two things follow. Turning the reasoning block off does not buy a cheap critic — it buys
-the 350M's behaviour, waving through every wrong answer. And a budget that looks generous
-can sit below the floor: at 512 tokens the critic spends everything inside `<think>`,
-returns "unsure" on 6 of 8, and charges 45 seconds for it — which from the outside is
-indistinguishable from a working verifier that never fires.
+A budget that looks generous can sit below the floor: at 512 tokens the critic spends
+everything inside `<think>`, returns "unsure" on 6 of 8, and charges 45 seconds for it —
+which from the outside is indistinguishable from a working verifier that never fires.
+
+**Two rows have been struck from this table, and why is worth keeping.** The same probe
+also ran the critic with reasoning "off" at 64 and 192 tokens, where it waved through 4
+of 4 wrong answers, and that was written up here as *"turning the reasoning block off
+buys the 350M's behaviour"*. It is not supported. Ollama advertises a `thinking`
+capability for this model, but **`think: false` does not actually suppress the block** —
+verified directly, `<think>` is emitted either way. Those rows measured a *truncated*
+reasoning block rather than a disabled one, and the verdict parser's fallback then
+scraped a verdict word out of the reasoning itself.
+
+That is the exact failure `app/adjudicate.py` is written to avoid, reappearing in the
+measurement harness instead of the parser. Reading a `<think>` block as a verdict has now
+produced a wrong conclusion twice here.
 
 At 2048 tokens it works, at 26.7 s median. But **answering the question on the 1.2B costs
 about the same ~25 s and produces a better answer rather than a grade on a worse one**, and
