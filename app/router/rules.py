@@ -34,12 +34,24 @@ _TRIVIAL = re.compile(
     re.IGNORECASE,
 )
 
-# Questions about the assistant's own identity. These are pinned to the LFM tier for
-# a measured reason: Qwen3.5-0.8B answers "who are you?" with "I am Qwen3.5, developed
-# by Tongyi Lab" no matter what the system prompt says (6/6 across three wordings —
-# see app/persona.py), while the 350M answers correctly every time. Prompting can't
-# fix that, so routing does. Note the negative lookahead: "what are you doing" is a
-# normal question, not an identity one, and "your name" must not catch "my name".
+# Questions about the assistant's own identity. **This rule has reversed direction, and
+# the original reason is kept because it shows exactly how a measurement expires.**
+#
+# It used to send identity to the 350M, because Qwen3.5-0.8B answered "who are you?" with
+# "I am Qwen3.5, developed by Tongyi Lab" 6/6 across three prompt wordings while the 350M
+# answered cleanly. Both halves have since stopped being true: the Qwen tier is parked,
+# and the 350M is now the one that leaks. Measured interleaved, 16 identity questions each:
+#
+#   350M       3/16 maker claims, 0.58 s   — including "created by the developers at
+#                                             OpenAI", which is confabulation, not a leak
+#   instruct   0/16 maker claims, 1.76 s
+#
+# Both deny being ChatGPT or Claude correctly, 4/4. So identity goes to the tier that gets
+# it right, for about 1.2 s more. Prompting still cannot fix it — see app/persona.py for
+# three wordings that were tried — so routing continues to do the work, just the other way.
+#
+# Note the negative lookahead: "what are you doing" is a normal question, not an identity
+# one, and "your name" must not catch "my name".
 _SELF_IDENTITY = re.compile(
     r"\b(what('?s| is) your name|who are you|what are you(?!\s+(doing|working|up|going"
     r"|talking|trying|looking|planning))|who (made|built|created|trained) you"
@@ -243,7 +255,7 @@ def apply(req: RouteRequest) -> RouteDecision | None:
     # "who are you?" is an identity question on turn 1 and on turn 30 alike.
     if _SELF_IDENTITY.search(text):
         return RouteDecision(
-            route="trivial",
+            route="chat",
             stage="rules",
             reason="asks about the assistant's own identity",
         )

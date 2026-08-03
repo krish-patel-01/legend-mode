@@ -379,14 +379,20 @@ cases:
       not_contains:
         ["have no name", "have one yet", "no company or product", "three sentences"]
 
-  - id: identity-question-pinned
+  - id: identity-question-routed-to-the-honest-tier
     category: persona
+    samples: 4
     prompt: "who are you?"
-    samples: 2
-    note: "Pinned to the 350M because Qwen3.5 claims to be Qwen regardless of prompt."
+    note: >
+      This asserted `route: trivial` and was named "pinned", because Qwen3.5-0.8B insisted
+      it was Qwen regardless of prompt while the 350M answered cleanly. Both halves
+      expired: that tier is parked, and the 350M became the leaker. Measured interleaved,
+      16 identity questions each — 350M 3/16 maker claims (one inventing OpenAI) against
+      instruct 0/16. Sampled 4x because the leak is stochastic and 2 samples missed it.
     expect:
-      route: trivial
-      not_contains: ["qwen", "tongyi", "alibaba", "openai", "anthropic"]
+      route: chat
+      not_contains: ["qwen", "tongyi", "alibaba", "openai", "anthropic", "liquid ai",
+                     "stanford"]
 
   - id: denies-being-chatgpt
     category: persona
@@ -394,7 +400,7 @@ cases:
     samples: 2
     note: "The word ChatGPT inside a correct denial is not a leak — check for the denial."
     expect:
-      route: trivial
+      route: chat
       regex: "(?i)^\\s*(no|i'?m not|i am not)\\b|not chatgpt"
 
   - id: user-name-is-not-assistant-name

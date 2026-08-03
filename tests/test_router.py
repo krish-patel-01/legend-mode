@@ -137,18 +137,21 @@ async def test_code_fence_routes_to_think(engine):
     "text",
     ["who are you?", "what's your name?", "what model are you", "who made you"],
 )
-async def test_identity_questions_pinned_to_the_lfm_tier(engine, text):
-    # Qwen3.5-0.8B insists it is Qwen regardless of system prompt, so these must never
-    # reach it. `trivial` resolves to the 350M, which answers correctly.
+async def test_identity_questions_go_to_the_tier_that_gets_them_right(engine, text):
+    # This assertion used to be `trivial`, because Qwen3.5-0.8B insisted it was Qwen
+    # regardless of prompt while the 350M answered cleanly. That tier is parked and the
+    # 350M has since become the leaker: measured interleaved over 16 identity questions
+    # each, 3/16 maker claims for the 350M (one of them inventing OpenAI) against 0/16
+    # for the instruct build. The rule survives; its direction reversed.
     decision = await engine.route(RouteRequest(text=text, message_count=6))
-    assert decision.route == "trivial"
+    assert decision.route == "chat"
     assert decision.stage == "rules"
 
 
 @pytest.mark.parametrize("text", ["what is my name?", "my name is Krish", "what are you doing"])
 async def test_identity_rule_does_not_overmatch(engine, text):
     decision = await engine.route(RouteRequest(text=text, message_count=6))
-    assert not (decision.stage == "rules" and decision.route == "trivial")
+    assert decision.reason != "asks about the assistant's own identity"
 
 
 async def test_counting_word_problem_routes_to_think(engine):
@@ -360,7 +363,11 @@ async def test_rules_still_beat_sticky(engine):
     decision = await engine.route(
         RouteRequest(text="who are you?", message_count=6, anchor_text=_BOX)
     )
-    assert decision.route == "trivial"
+    # The tier moved from `trivial` to `chat` when identity routing reversed; what this
+    # case guards is that the rules stage decided at all, rather than sticky inheriting
+    # the reasoning tier from the thread.
+    assert decision.stage == "rules"
+    assert decision.route == "chat"
     assert decision.stage == "rules"
 
 

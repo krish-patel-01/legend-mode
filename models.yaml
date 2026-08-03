@@ -126,6 +126,28 @@ models:
     top_k: 40
     repeat_penalty: 1.1
 
+  # Temporary, for a quantisation comparison — remove once it is settled. Unsloth's
+  # *dynamic* 3-bit rather than a plain Q3_K_M: UD quants keep more precision in the
+  # layers that matter, which is the only version of 3-bit worth considering on a tier
+  # that was adopted for answer quality in the first place.
+  #
+  # 600 MB against Q4_K_M's 731 MB. The hoped-for win is throughput, since CPU decode is
+  # memory-bandwidth bound — but the measured bottleneck on this machine is sustained-load
+  # throttling, not bandwidth, so the honest prior is that it buys little. Being tested
+  # interleaved with Q4 for exactly that reason.
+  - alias: instruct-q3
+    tier: instruct
+    repo: unsloth/LFM2.5-1.2B-Instruct-GGUF
+    file: LFM2.5-1.2B-Instruct-UD-Q3_K_XL.gguf
+    glob:
+      - "**/LFM2.5-1.2B-Instruct-UD-Q3_K_XL.gguf"
+    keep_alive: 5m
+    default_max_tokens: 512
+    temperature: 0.6
+    top_p: 0.9
+    top_k: 40
+    repeat_penalty: 1.1
+
   # --- Parked. Weights stay on disk (and `legend/small` is still tagged in Ollama),
   # so uncommenting an entry and re-running scripts/import_models.py brings it back.
   # Anything restored here also needs its route re-added to routes.yaml, which no

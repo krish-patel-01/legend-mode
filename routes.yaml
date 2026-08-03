@@ -51,7 +51,20 @@ routes:
     # because greetings and identity are caught by regex in app/router/rules.py before any
     # model sees them, and the stage-3 classifier stays there too, where 71.8 tok/s is the
     # entire point and answer quality is irrelevant.
-    model: instruct
+    # Unsloth's *dynamic* 3-bit, not the Q4_K_M. Interleaved per prompt, since this
+    # machine loses ~30% throughput under sustained load and A-then-B measures order:
+    #
+    #                median tok/s   maker claims   echoes   size
+    #   Q4_K_M               41.0              0        0   731 MB
+    #   UD-Q3_K_XL           46.0              0        0   600 MB
+    #
+    # +12% throughput and 131 MB less resident, with the failure modes the instruct tier
+    # was adopted to fix still at zero across a six-turn replay of a real transcript. The
+    # agreed condition was that any return of maker claims or echoes keeps Q4 whatever the
+    # speed; they did not return. Plain Q3_K_M was not considered — a dynamic quant keeps
+    # precision where it matters, which is the only kind worth putting on a tier chosen
+    # for answer quality.
+    model: instruct-q3
     description: ordinary conversation, short explanations, drafting, rewriting
     examples:
       - "explain what a REST API is"
