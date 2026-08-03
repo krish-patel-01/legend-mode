@@ -83,7 +83,7 @@ body::before {
   height: 100%;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  grid-template-columns: minmax(0, 1fr) 400px;
+  grid-template-columns: minmax(0, 1fr) 372px;
   grid-template-areas: "hd hd" "main side";
 }
 
@@ -307,9 +307,26 @@ aside {
 ::-webkit-scrollbar-thumb { background: #33241a; }
 ::-webkit-scrollbar-thumb:hover { background: var(--line-hot); }
 
-@media (max-width: 1000px) {
-  #app { grid-template-columns: minmax(0,1fr); grid-template-areas: "hd" "main" "side"; grid-template-rows: auto minmax(0,1fr) minmax(0,320px); }
-  aside { border-left: none; border-top: 1px solid var(--line); }
+/* The trace belongs beside the chat, not under it — reading a decision means
+   looking across at it while the reply is still on screen. An earlier version
+   stacked the panel below `main` on narrow windows, which put it off-screen
+   exactly when the reply was long enough to be worth tracing.
+   So under the breakpoint it becomes a drawer that slides in from the right
+   rather than a row that falls underneath. Still on the side, at any width. */
+#drawerToggle { display: none; }
+
+@media (max-width: 880px) {
+  #app { grid-template-columns: minmax(0,1fr); grid-template-areas: "hd" "main"; grid-template-rows: auto minmax(0,1fr); }
+  aside {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 20;
+    width: min(372px, 90vw);
+    border-left: 1px solid var(--line-hot);
+    box-shadow: -22px 0 44px rgba(0,0,0,0.55);
+    transform: translateX(101%);
+    transition: transform .18s ease-out;
+  }
+  aside.open { transform: none; }
+  #drawerToggle { display: block; }
   .msg { max-width: 92%; }
 }
 </style>
@@ -336,6 +353,7 @@ aside {
       </div>
     </div>
     <div class="status" id="status"></div>
+    <button class="ghost" id="drawerToggle" title="Show the decision trace">trace</button>
   </header>
 
   <main>
@@ -520,6 +538,7 @@ function renderTrace(meta, whenLabel) {
 }
 
 function selectMessage(idx) {
+  openDrawer();
   document.querySelectorAll(".msg.bot").forEach((n) => n.classList.remove("selected"));
   const node = document.querySelector(`.msg.bot[data-idx="${idx}"]`);
   if (node) node.classList.add("selected");
@@ -687,6 +706,7 @@ async function preview() {
   try {
     const meta = await (await fetch("/route/debug?prompt=" + encodeURIComponent(text))).json();
     renderTrace(meta, "preview");
+    openDrawer();
   } catch (err) {
     $("#trace").innerHTML = `<p class="empty">Preview failed: ${esc(err.message)}</p>`;
   }
@@ -696,6 +716,12 @@ async function preview() {
 
 sendBtn.onclick = send;
 $("#preview").onclick = preview;
+
+const aside = document.querySelector("aside");
+$("#drawerToggle").onclick = () => aside.classList.toggle("open");
+// Opening the trace should follow from asking for a trace, so the drawer opens itself
+// when one is rendered. Only matters under the breakpoint; above it the class is inert.
+const openDrawer = () => aside.classList.add("open");
 $("#reset").onclick = () => {
   messages = []; traces = [];
   log.innerHTML = "";
