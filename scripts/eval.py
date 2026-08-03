@@ -173,6 +173,19 @@ def check(reply: str, meta: dict[str, Any], expect: dict[str, Any]) -> list[str]
         if got_budget >= budget:
             problems.append(f"token budget {got_budget} not below {budget}")
 
+    # The mirror check, and the one that matters on a reasoning tier: a budget below the
+    # floor removes the answer rather than shortening it (see app/effort.py).
+    if (floor := expect.get("max_tokens_at_least")) is not None:
+        got_budget = (meta.get("effort") or {}).get("max_tokens", 0)
+        if got_budget < floor:
+            problems.append(f"token budget {got_budget} below the floor {floor}")
+
+    # The exhaustion reply is well-formed prose carrying no number, so `regex` and
+    # `not_number` both wave it through. Any case that expects a real answer should say so
+    # explicitly, since the global counter only says *that* it happened, not where.
+    if expect.get("real_answer") and EXHAUSTION_MARKER in low:
+        problems.append("returned the budget-exhaustion reply instead of an answer")
+
     if (want_r := expect.get("retrieved")) is not None:
         # `retrieved` is None when retrieval never ran and [] when it ran and found
         # nothing above threshold. Both mean "no corpus text reached the model", and the
@@ -188,14 +201,30 @@ class Runner:
     def __init__(self, base_url: str, routes_only: bool, timeout: float) -> None:
         self._client = httpx.Client(base_url=base_url, timeout=timeout)
         self._routes_only = routes_only
+        self.retries = 0
 
     def close(self) -> None:
         self._client.close()
 
     def _chat(self, messages: list[dict[str, str]]) -> tuple[str, dict[str, Any]]:
-        resp = self._client.post(
-            "/v1/chat/completions", json={"model": "auto", "messages": messages}
-        )
+        # One retry on a 5xx, because a full run takes tens of minutes and a single
+        # transient upstream hiccup used to abort the whole thing with nothing recorded.
+        # Observed twice: generation on the reasoning tier stalled to ~0.08 tok/s, the
+        # server's own 300 s timeout to Ollama fired, and the resulting 502 killed a run
+        # that was 40% done. The cause of the stall is not established — it is not model
+        # eviction, which was tested and ruled out — so this is deliberately a resilience
+        # measure and not a fix. A retried case is reported, so it can never quietly
+        # inflate a score.
+        for attempt in (1, 2):
+            resp = self._client.post(
+                "/v1/chat/completions", json={"model": "auto", "messages": messages}
+            )
+            if resp.status_code < 500:
+                break
+            if attempt == 1:
+                self.retries += 1
+                print(f"    (upstream {resp.status_code}, retrying once)", flush=True)
+                time.sleep(5)
         resp.raise_for_status()
         body = resp.json()
         reply = (body["choices"][0]["message"].get("content") or "").strip()
@@ -390,6 +419,11 @@ def main() -> int:
     if exhausted:
         print(f"** {exhausted} sample(s) hit the budget-exhaustion reply — see "
               f"EXHAUSTION_MARKER; a tier is being starved **")
+    if runner.retries:
+        # Reported rather than swallowed: a run that needed retries is a run where the
+        # upstream was unhealthy, and its latency numbers should not be trusted.
+        print(f"** {runner.retries} request(s) needed a retry after a 5xx — treat this "
+              f"run's latencies as unreliable **")
     if skipped:
         print(f"\nskipped ({len(skipped)}: known-failing, or in --routes-only "
               f"multi-turn / no routing expectation): {', '.join(skipped)}")

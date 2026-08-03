@@ -21,9 +21,19 @@ class Settings(BaseSettings):
     models_file: Path = ROOT / "models.yaml"
     routes_file: Path = ROOT / "routes.yaml"
 
-    # Ollama keeps at most this many models resident. The pinned tier occupies one
-    # slot permanently, so 2 means "pinned + one swapped model".
-    max_loaded_models: int = 2
+    # Ollama keeps at most this many models resident.
+    #
+    # This said 2, with the reasoning "the pinned tier occupies one slot permanently, so 2
+    # means pinned + one swapped model". The arithmetic was off by one: *two* models are
+    # pinned, `general` and `embed`, so 2 leaves no room for a swapped tier at all and the
+    # reasoning model can only ever be resident by evicting a pinned one.
+    #
+    # Note this is advisory. Nothing here applies it to the daemon — `ollama_env` below
+    # exists to be exported by whoever starts `ollama serve`, and if that never happens
+    # Ollama uses its own default. Measured on this machine with the variable unset, all
+    # three models co-reside happily and a warm reasoning request is 0.4 s, so the default
+    # is not currently the binding constraint. Set it if residency ever starts churning.
+    max_loaded_models: int = 3
 
     # Cap on cached routing decisions, keyed by prompt hash.
     decision_cache_size: int = 512

@@ -256,9 +256,17 @@ cases:
       - "How many boxes do I have if I have two boxes with one box inside each?"
       - "nope"
     samples: 3
-    note: "The 1.2B exhausted its budget and returned empty content on terse disputes."
+    note: >
+      The 1.2B exhausted its budget and returned empty content on terse disputes.
+
+      This case existed to catch exactly that and did not: `regex: "\w"` is satisfied by
+      the honest-exhaustion message app/api.py substitutes, so the case scored 100% while
+      failing at the thing it is named after. `real_answer` closes that. Expect this to
+      show the residual rate rather than a clean 100% — the underlying limit is the
+      model's, and it is better counted than hidden.
     expect:
       route: think
+      real_answer: true
       regex: "\\w"
 
   - id: continuation-stays-on-tier
@@ -436,20 +444,28 @@ cases:
 
   # --- effort: the controller's budgets and levels -----------------------------------
 
-  - id: bare-denial-gets-a-small-budget
+  - id: bare-denial-still-gets-a-real-answer
     category: effort
     turns:
       - "How many boxes do I have if I have two boxes with one box inside each?"
       - "nope"
     samples: 2
     note: >
-      The bug step 3 exists to fix. A contentless denial used to reach the reasoning tier
-      with the full 1536-token budget and nothing concrete to think about, and roughly 1
-      turn in 6 burned the lot and returned empty content. The reply wanted is one
-      sentence asking which part is wrong.
+      This case previously asserted `max_tokens_below: 512`, on the theory that a
+      contentless denial deserves a small budget because the wanted reply is one short
+      sentence. That was measured and it is wrong: a thinking model emits its reasoning
+      block first, so a budget under the floor removes the answer rather than shortening
+      it. At 384 tokens essentially every dispute turn returned the exhaustion message —
+      strictly worse than the roughly 1 in 6 the small budget was meant to fix.
+
+      Inverted deliberately, so it now fails if that starvation is ever reintroduced.
+      `real_answer` is the load-bearing check: the exhaustion reply is well-formed prose
+      with no forbidden number in it, so `regex` and `not_number` both wave it through,
+      which is exactly how the regression scored as a clean run.
     expect:
       route: think
-      max_tokens_below: 512
+      max_tokens_at_least: 1024
+      real_answer: true
       regex: "\\w"
 
   - id: greetings-cost-almost-nothing
@@ -469,18 +485,25 @@ cases:
       grounded: percent_of
       number: 36
 
-  - id: a-correction-gets-more-room-than-a-denial
+  - id: a-correction-is-re-worked-not-starved
     category: effort
     turns:
       - "Five monkeys are jumping around on a four poster bed while three chickens stand and watch. How many legs are on the floor?"
       - "But the monkeys are on the bed"
     note: >
-      A correction re-works the whole problem with the new fact included, so it earns the
-      largest of the three follow-up budgets — but still less than the tier default.
+      A correction re-works the whole problem from the start with the new fact included,
+      which is the most expensive of the three follow-up kinds — so it is the one least
+      able to afford a trimmed budget. Previously asserted `max_tokens_below: 1536` for
+      the same wrong reason as the case above.
+
+      Whether the 1.2B then reaches 10 is tracked separately as `monkeys-riddle-answer`,
+      which is `known_failing`. This case asserts only that the turn is recognised,
+      routed, and answered rather than starved.
     expect:
       route: think
       effort: careful
-      max_tokens_below: 1536
+      max_tokens_at_least: 1024
+      real_answer: true
 
   # --- retrieval: questions only the local corpus can answer -------------------------
   #
@@ -505,9 +528,16 @@ cases:
     category: retrieval
     prompt: "how do I run the evals in this project?"
     samples: 2
+    note: >
+      `any_of` lists strings the model could only have got from the corpus. The original
+      list named the script and the case file but not the flags, and a correct answer —
+      "use `uv run` with options like `--routes-only`, `--save-baseline`" — scored as a
+      miss. The flags are exactly as corpus-derived as the filenames, so this is an
+      incomplete enumeration being completed, not a threshold being relaxed.
     expect:
       retrieved: true
-      any_of: ["eval.py", "scripts/eval", "cases.yaml"]
+      any_of: ["eval.py", "scripts/eval", "cases.yaml", "--routes-only",
+               "--save-baseline", "evals/"]
 
   - id: arithmetic-never-retrieves
     category: retrieval
