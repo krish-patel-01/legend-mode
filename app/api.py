@@ -248,8 +248,19 @@ async def chat_completions(request: Request) -> Any:
         # the chunk that says "the verifier is always the 1.2B and never the 350M", the
         # 350M answered "The model that verifies answers is LFM2.5-350M". It inverted the
         # source. So a retrieval hit escalates to the tier that can actually read it.
+        # Escalate only off the router tier. When this rule was written `chat` *was* the
+        # 350M, which inverted a retrieved passage outright ("the verifier is LFM2.5-350M"
+        # from a chunk saying the opposite). `chat` is now a 1.2B instruct build that reads
+        # fine — asked the same memory-backed question the three tiers answered:
+        #
+        #   instruct-q3  "Krish. Legend Mode."                       correct, 17 s
+        #   think        "Your name is Krish. You work on …"         correct, 11 s
+        #   general      "My name is Krish. I work on …"             wrong
+        #
+        # So escalating from instruct bought nothing and cost a tier swap. The 350M still
+        # cannot be trusted with retrieved text, and that is the case this now covers.
         reader = engine.registry.get(settings.reader_alias)
-        if reader is not None and reader.alias != spec.alias:
+        if reader is not None and spec.alias == settings.router_alias:
             log.info(
                 "retrieval hit (%s); escalating %s -> %s to read it",
                 ", ".join(decision.retrieved or []), spec.alias, reader.alias,

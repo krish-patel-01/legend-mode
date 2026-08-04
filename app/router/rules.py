@@ -55,7 +55,12 @@ _TRIVIAL = re.compile(
 _SELF_IDENTITY = re.compile(
     r"\b(what('?s| is) your name|who are you|what are you(?!\s+(doing|working|up|going"
     r"|talking|trying|looking|planning))|who (made|built|created|trained) you"
-    r"|what (model|llm|ai) are you|are you (chat ?gpt|claude|gemini|gpt|qwen|llama))\b",
+    r"|what (model|llm|ai) are you|are you (chat ?gpt|claude|gemini|gpt|qwen|llama)"
+    # "what should I call you" is an identity question that names neither "you" nor
+    # "name" in a shape the clauses above catch. Missing it was not harmless: it fell
+    # through to retrieval, matched the stored "my name is Krish", and answered "Krish."
+    # — telling the user their own name when they asked for the assistant's.
+    r"|what (should|do) i call you|what can i call you|do you have a name)\b",
     re.IGNORECASE,
 )
 

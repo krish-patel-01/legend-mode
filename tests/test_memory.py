@@ -59,10 +59,31 @@ def test_questions_and_chatter_are_not_captured(text):
     assert memory.extract(text) is None
 
 
-def test_the_captured_text_is_the_users_own_words():
-    """Verbatim, never paraphrased — nothing generated may enter the store."""
-    assert memory.extract("my name is Krish").text == "my name is Krish"
-    assert memory.extract("remember that I use uv, not pip").text == "I use uv, not pip"
+@pytest.mark.parametrize(
+    "said,stored",
+    [
+        ("my name is Krish", "The user's name is Krish"),
+        ("i'm called Krish", "The user's name is Krish"),
+        ("I work on Legend Mode", "The user said they work on Legend Mode"),
+        ("i work at Acme", "The user said they work at Acme"),
+        ("I am building a router", "The user said they are building a router"),
+        ("I live in Pune", "The user said they live in Pune"),
+        ("I prefer concise answers", "The user said they prefer concise answers"),
+        ("I always use uv", "The user said they always use uv"),
+        ("remember that I use uv, not pip", "The user asked you to remember: I use uv, not pip"),
+    ],
+)
+def test_facts_are_stored_in_the_third_person(said, stored):
+    """Verbatim storage reads fine to a human and has no owner to a model: asked "what is
+    my name and what do I do?" the assistant answered "My name is Krish. I work on Legend
+    Mode." Quoting and attributing it in the prompt helped and did not settle it. Rendering
+    the fact from the assistant's point of view before storing removes the pronouns
+    entirely, so the embedding, the prompt and the panel all read the same sentence.
+
+    Note the templates route through "The user said they …" — after "they" the base verb
+    form is correct for every verb, so no conjugation is needed."""
+    fact = memory.extract(said)
+    assert fact is not None and fact.text == stored
 
 
 # --- consolidation -----------------------------------------------------------
@@ -95,33 +116,33 @@ async def test_a_restated_fact_replaces_the_old_one(mem):
     """Two answers to "what is my name" is worse than none. mem0 makes this call with an
     LLM function call; a key comparison gets the same result for nothing."""
     store_api, store = mem
-    await store_api.remember(memory.Fact("my name is Krish", "my name"))
-    saved = await store_api.remember(memory.Fact("my name is Kris", "my name"))
+    await store_api.remember(memory.Fact("The user's name is Krish", key="my name"))
+    saved = await store_api.remember(memory.Fact("The user's name is Kris", key="my name"))
 
     entries = store_api.entries()
     assert len(entries) == 1
-    assert entries[0]["text"] == "my name is Kris"
-    assert saved is not None and saved["replaced"] == "my name is Krish"
+    assert entries[0]["text"] == "The user's name is Kris"
+    assert saved is not None and saved["replaced"] == "The user's name is Krish"
 
 
 async def test_keyless_facts_accumulate(mem):
     """Preferences are not mutually exclusive, so they sit beside each other."""
     store_api, _ = mem
-    await store_api.remember(memory.Fact("I prefer concise answers", None))
-    await store_api.remember(memory.Fact("I use uv, not pip", None))
+    await store_api.remember(memory.Fact("The user said they prefer concise answers"))
+    await store_api.remember(memory.Fact("The user said they use uv, not pip"))
     assert len(store_api.entries()) == 2
 
 
 async def test_storing_a_known_fact_twice_is_a_no_op(mem):
     store_api, _ = mem
-    await store_api.remember(memory.Fact("my name is Krish", "my name"))
-    assert await store_api.remember(memory.Fact("my name is Krish", "my name")) is None
+    await store_api.remember(memory.Fact("The user's name is Krish", key="my name"))
+    assert await store_api.remember(memory.Fact("The user's name is Krish", key="my name")) is None
     assert len(store_api.entries()) == 1
 
 
 async def test_a_memory_can_be_forgotten(mem):
     store_api, _ = mem
-    saved = await store_api.remember(memory.Fact("my name is Krish", "my name"))
+    saved = await store_api.remember(memory.Fact("The user's name is Krish", key="my name"))
     assert saved is not None
     assert store_api.forget(int(saved["id"])) is True
     assert store_api.entries() == []
@@ -134,7 +155,7 @@ async def test_memories_share_the_document_store(mem):
     store_api, store = mem
     store.set_embedder("legend/embed", 3)
     store.replace_source("notes.md", [("H", "some document text here")], [[1.0, 0.0, 0.0]])
-    await store_api.remember(memory.Fact("my name is Krish", "my name"))
+    await store_api.remember(memory.Fact("The user's name is Krish", key="my name"))
 
     assert sorted(store.sources) == ["memory", "notes.md"]
     assert len(store) == 2
@@ -142,5 +163,5 @@ async def test_memories_share_the_document_store(mem):
 
 async def test_capture_costs_exactly_one_embed_and_no_model_call(mem):
     store_api, _ = mem
-    await store_api.remember(memory.Fact("my name is Krish", "my name"))
+    await store_api.remember(memory.Fact("The user's name is Krish", key="my name"))
     assert store_api._client.calls == 1

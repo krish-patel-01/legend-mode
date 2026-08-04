@@ -146,10 +146,13 @@ class Settings(BaseSettings):
     # correct parametric knowledge.
     retrieval_memory_min_score: float = 0.55
 
-    # Left unset until a name is picked. The system prompt (app/persona.py) reads
-    # this and tells the model to say it doesn't have a name yet rather than either
-    # inventing one or claiming to be ChatGPT/Claude/whatever it was trained near.
-    assistant_name: str | None = None
+    # The name is picked, so this is a default rather than an env-only setting: the
+    # named branch of app/persona.py is what carries the personality, and leaving it
+    # unset would quietly ship the anonymous prompt to anyone cloning this.
+    #
+    # Setting it to None restores the unnamed persona, which tells the model to say it
+    # has no name rather than invent one or claim to be a commercial assistant.
+    assistant_name: str | None = "Lucy"
 
     @property
     def ollama_env(self) -> dict[str, str]:

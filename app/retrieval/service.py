@@ -60,18 +60,34 @@ class RetrievalResult:
 # directive gets it echoed back verbatim by models this size — app/persona.py records two
 # separate instances. Passages have no such failure mode.
 _PREAMBLE = (
-    "Reference material from this machine's local notes, retrieved for this question. "
-    "Answer the question using it. If it does not cover part of what was asked, answer "
-    "that part from your own knowledge and say plainly which part came from where."
+    "Reference material retrieved for this question. Answer the question using it. If it "
+    "does not cover part of what was asked, answer that part from your own knowledge and "
+    "say plainly which part came from where."
 )
+
+# Memories arrive already in the third person — app/memory.py renders them that way at
+# capture. Two attempts to fix the ownership confusion here instead both failed: a prompt
+# line saying "my and I mean the user", then quoting and attributing each fact inline. The
+# flip back to "My name is Krish" survived both. Pronouns in the stored text beat
+# instructions about the stored text, so the text is what changed.
+#
+# This block therefore only introduces them, and must not re-attribute — doing so produced
+# `- The user told you: "The user's name is Krish"`.
+_MEMORY_LEAD = "What you know about the user from earlier conversations:"
 
 
 def as_system_note(result: RetrievalResult) -> str:
-    blocks = [
-        f"--- from {hit.source}{f' ({hit.heading})' if hit.heading else ''} ---\n{hit.text}"
-        for hit in result.hits
-    ]
-    return _PREAMBLE + "\n\n" + "\n\n".join(blocks)
+    memories = [h for h in result.hits if h.source == MEMORY_SOURCE]
+    documents = [h for h in result.hits if h.source != MEMORY_SOURCE]
+
+    parts = [_PREAMBLE]
+    if memories:
+        bullets = "\n".join(f"- {h.text}" for h in memories)
+        parts.append(f"{_MEMORY_LEAD}\n{bullets}")
+    for hit in documents:
+        heading = f" ({hit.heading})" if hit.heading else ""
+        parts.append(f"--- from {hit.source}{heading} ---\n{hit.text}")
+    return "\n\n".join(parts)
 
 
 def _normalize_query(text: str) -> str:

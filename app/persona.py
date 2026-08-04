@@ -52,6 +52,53 @@ _FULL_UNNAMED = (
 )
 _FULL_NAMED = "If the user tells you their name, remember it and use it."
 
+# **The 350M is never told the assistant's name. This is measured, and it is emphatic.**
+#
+# Naming it makes it answer with the name and nothing else. Four brief prompts, interleaved
+# over 16 probes each ("Hey", "hi", "thanks!", "what is the capital of France"), counting
+# replies that were just the name or an echo of the prompt:
+#
+#   name + a style clause        16/16 broken   "Hey" -> "Lucy"
+#   name alone                    8/16 broken   "what is the capital of France" -> "Lucy"
+#   name as a conditional rule   16/16 broken   "thanks!" -> "Lucy"
+#   unnamed (control)             0/16
+#
+# This is the failure in note 1 above, at full strength: a proper noun in a prompt this
+# short is simply a more attractive completion than the answer. Three wordings were tried;
+# the problem is the name's presence, not its phrasing.
+#
+# It costs nothing, because the tier no longer needs it. Identity questions used to route
+# here and now route to `chat` (see app/router/rules.py, where that rule reversed), so the
+# 350M only handles greetings and acknowledgements — turns where the name would never come
+# up. `full` still gets the name and the personality.
+# The named prompt is a measured wording, not a written one. Having a name in the prompt
+# turns out not to mean the model will *use* it: asked "who are you?", "what should I call
+# you?" and "hey, what's your name?", four clauses scored, interleaved —
+#
+#   clause                                          says it when asked   volunteers it
+#   "Your name is Lucy."                                    3/12              0/6
+#   "You are Lucy, a helpful …"                             5/12              0/6
+#   "You are Lucy … When someone asks who you are,         11/12              0/6
+#    you say your name."
+#   "… You have a name and you use it; you never           10/12              0/6
+#    say you lack an identity."
+#
+# Scored two-sided on purpose. Saying the name is the goal, but volunteering it unasked is
+# what destroyed the 350M, so a clause that wins the first column and loses the second is
+# not a win. All four were clean there; the third is simply better at the job.
+#
+# At "Your name is Lucy." — the obvious phrasing — three replies in four were "I'm an AI
+# assistant, I don't have a personal identity". Stating a fact does not make a model this
+# size act on it; stating when to act on it does.
+_FULL_NAMED_OPENER = (
+    "You are {name}, a helpful and direct AI assistant running locally. When someone asks "
+    "who you are, you say your name."
+)
+_FULL_NAMED_STYLE = (
+    "Your manner is direct and a little dry: warm without being eager, confident without "
+    "overclaiming. You say when you don't know something instead of guessing."
+)
+
 # {identity} sits mid-prompt on purpose — see note 1 above.
 _BRIEF = "You are a helpful local AI assistant. {identity} Answer the user's question directly and concisely."
 _FULL = (
@@ -101,12 +148,19 @@ CORRECTION_NOTE = (
 
 def build_system_prompt(assistant_name: str | None, style: str = "full") -> str:
     brief = style == "brief"
-    if assistant_name:
-        identity = f"Your name is {assistant_name}."
-        if not brief:
-            identity = f"{identity} {_FULL_NAMED}"
-    else:
-        identity = _BRIEF_UNNAMED if brief else _FULL_UNNAMED
+    # The `brief` tier is never told the name, whatever `assistant_name` says. See the
+    # note above _BRIEF_NAMED_STYLE: putting it in this prompt at all makes the 350M
+    # answer "Lucy" to everything, including "what is the capital of France".
+    if assistant_name and not brief:
+        # The named prompt replaces the opener rather than filling {identity}, because the
+        # wording that measured best puts the name in the first clause. Ends on the same
+        # directive as the unnamed one — see note 1.
+        return (
+            f"{_FULL_NAMED_OPENER.format(name=assistant_name)} {_FULL_NAMED_STYLE} "
+            f"{_FULL_NAMED} Don't bring up how you work internally unless the user asks. "
+            f"Answer directly and concisely unless real depth is asked for."
+        )
+    identity = _BRIEF_UNNAMED if brief else _FULL_UNNAMED
     return (_BRIEF if brief else _FULL).format(identity=identity)
 
 

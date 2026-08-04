@@ -43,7 +43,22 @@ _MAX_CAPTURE_CHARS = 240
 @dataclass(frozen=True)
 class Fact:
     text: str
-    key: str | None
+    """Third person, for storing and for showing the model. See the note on _PATTERNS."""
+
+    said: str = ""
+    """What the user actually typed, used only as the embedding input.
+
+    Rewriting to third person fixed the pronouns and broke recall: stored as "The user
+    said they work on Legend Mode", the question "where do I work" no longer matched,
+    because the shared phrasing it was matching on had been rewritten away.
+
+    So the two jobs are separated. The embedding is built from the user's own wording,
+    which is the wording their later questions will resemble; the text handed to the model
+    is the unambiguous third-person one. Nothing needs to be embedded twice — a memory has
+    exactly one vector, it is simply computed from the sentence that retrieves best.
+    """
+
+    key: str | None = None
     """What this fact is *about*, when that can be named.
 
     Drives consolidation: a new "my name" replaces the old "my name" instead of sitting
@@ -54,27 +69,46 @@ class Fact:
 
 
 # Ordered: the explicit form wins, since "remember that my name is X" is unambiguous.
+# Everything here is deliberately narrow — a generous capture rule fills the store with
+# conversational noise, and noise is what makes retrieval harm answers.
 #
-# Everything here is deliberately narrow. A generous capture rule fills the store with
-# conversational noise, and noise is precisely what makes retrieval harm answers — the
-# 5.0-point GPQA drop this project's gating exists to avoid.
-_PATTERNS: list[tuple[re.Pattern[str], str | None]] = [
+# **Facts are stored in the third person, and that is the fix for a real bug.**
+#
+# Storing the user's words verbatim — "my name is Krish" — reads correctly to a human and
+# has no owner to a model. Asked "what is my name and what do I do?" the assistant replied
+# **"My name is Krish. I work on Legend Mode."** Quoting and attributing it in the prompt
+# ("The user told you: ...") helped and did not settle it; the flip still came back on some
+# samples. Instruction cannot reliably beat the pronouns sitting in the text.
+#
+# So each pattern carries a template that renders the fact from the assistant's point of
+# view before it is ever stored. Everything downstream — the embedding, the injected
+# prompt, the memory panel — then reads the same unambiguous sentence.
+#
+# The templates route through "The user said they …" rather than conjugating. "The user
+# works on X" needs a verb agreement engine the moment the verb is "prefer" or "always
+# use"; after "they", the base form is already correct for every verb, so a one-line
+# template covers all of them.
+_PATTERNS: list[tuple[re.Pattern[str], str | None, str]] = [
     (re.compile(r"^\s*(?:please\s+)?(?:remember|note|keep in mind)"
-                r"(?:\s+that)?\s*[:,-]?\s*(?P<fact>\S.{2,200}?)\s*$", re.IGNORECASE), None),
+                r"(?:\s+that)?\s*[:,-]?\s*(?P<fact>\S.{2,200}?)\s*$", re.IGNORECASE),
+     None, "The user asked you to remember: {fact}"),
     (re.compile(r"^\s*don'?t forget\s*[:,-]?\s*(?P<fact>\S.{2,200}?)\s*$",
-                re.IGNORECASE), None),
-    (re.compile(r"\b(?P<fact>my name(?:'s| is)\s+(?P<v>[\w'’-]{1,40}))", re.IGNORECASE),
-     "my name"),
-    (re.compile(r"\b(?P<fact>i(?:'m| am) (?:called|named)\s+(?P<v>[\w'’-]{1,40}))",
-                re.IGNORECASE), "my name"),
-    (re.compile(r"\b(?P<fact>i work (?:on|at|for)\s+(?P<v>[\w'’ .,&-]{2,60}))",
-                re.IGNORECASE), "where i work"),
-    (re.compile(r"\b(?P<fact>i(?:'m| am) (?:building|working on)\s+"
-                r"(?P<v>[\w'’ .,&-]{2,60}))", re.IGNORECASE), "what i am working on"),
-    (re.compile(r"\b(?P<fact>i live in\s+(?P<v>[\w'’ .,-]{2,50}))", re.IGNORECASE),
-     "where i live"),
-    (re.compile(r"\b(?P<fact>i (?:prefer|always use|never use|can'?t stand|hate|love)\s+"
-                r"(?P<v>[\w'’ .,&/-]{2,60}))", re.IGNORECASE), None),
+                re.IGNORECASE), None, "The user asked you not to forget: {fact}"),
+    (re.compile(r"\bmy name(?:'s| is)\s+(?P<v>[\w'’-]{1,40})", re.IGNORECASE),
+     "my name", "The user's name is {v}"),
+    (re.compile(r"\bi(?:'m| am) (?:called|named)\s+(?P<v>[\w'’-]{1,40})",
+                re.IGNORECASE), "my name", "The user's name is {v}"),
+    (re.compile(r"\bi work (?P<prep>on|at|for)\s+(?P<v>[\w'’ .,&-]{2,60})",
+                re.IGNORECASE), "where i work",
+     "The user said they work {prep} {v}"),
+    (re.compile(r"\bi(?:'m| am) (?P<verb>building|working on)\s+(?P<v>[\w'’ .,&-]{2,60})",
+                re.IGNORECASE), "what i am working on",
+     "The user said they are {verb} {v}"),
+    (re.compile(r"\bi live in\s+(?P<v>[\w'’ .,-]{2,50})", re.IGNORECASE),
+     "where i live", "The user said they live in {v}"),
+    (re.compile(r"\bi (?P<verb>prefer|always use|never use|can'?t stand|hate|love)\s+"
+                r"(?P<v>[\w'’ .,&/-]{2,60})", re.IGNORECASE), None,
+     "The user said they {verb} {v}"),
 ]
 
 # A question is never a fact, however much it looks like one. "do you remember my name?"
@@ -89,18 +123,18 @@ def extract(text: str) -> Fact | None:
     if not stripped or len(stripped) > _MAX_CAPTURE_CHARS:
         return None
 
-    for pattern, key in _PATTERNS:
+    for pattern, key, template in _PATTERNS:
         match = pattern.search(stripped)
         if not match:
             continue
-        fact = (match.groupdict().get("fact") or "").strip(" .,;:")
-        if not fact:
+        groups = {k: (v or "").strip(" .,;:") for k, v in match.groupdict().items()}
+        if not any(groups.values()):
             continue
         # The explicit forms ("remember that ...") are exempt: they open with an
         # imperative, and their payload may legitimately be phrased as anything.
         if key is not None and _QUESTION.search(stripped):
             return None
-        return Fact(text=fact, key=key)
+        return Fact(text=template.format(**groups), said=stripped, key=key)
     return None
 
 
@@ -139,7 +173,8 @@ class MemoryStore:
         if self._store is None:
             return None
 
-        vectors = await self._client.embed(self._embed_spec, [fact.text])
+        # Embed what the user said; store what the model can read. See Fact.said.
+        vectors = await self._client.embed(self._embed_spec, [fact.said or fact.text])
         if not vectors:
             return None
 
