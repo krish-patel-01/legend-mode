@@ -349,7 +349,16 @@ async def chat_completions(request: Request) -> Any:
     # 935 tokens. So exhaustion here means the question is past this tier's ability, not
     # that it was interrupted — and the reply should not invite a retry that will fail
     # the same way.
+    # Reasoning tiers open their reply with the newlines that followed the </think> block,
+    # and a chat UI rendering with `white-space: pre-wrap` shows those as a blank gap above
+    # the answer. Visible on `think` almost every time and occasionally on `instruct`.
+    # Trimmed here rather than in the console so every client gets it, and because leading
+    # whitespace is never part of an answer.
     message = result.get("message") or {}
+    if isinstance(message.get("content"), str):
+        message["content"] = message["content"].strip()
+        result["message"] = message
+
     if not (message.get("content") or "").strip() and not message.get("tool_calls"):
         log.warning(
             "%s produced no content in %s tokens; likely past this tier's ability",
@@ -553,13 +562,21 @@ async def _stream(
     async def _chunks():
         first = True
         tokens = 0
+        # Same leading-whitespace trim as the non-streaming path, but it has to be stateful
+        # here: only the whitespace *before the first real character* is noise. Blank lines
+        # later in the reply are the model's paragraphing and must survive.
+        seen_text = False
         async for chunk in client.chat_stream(spec, messages, tools=tools, options=options):
             message = chunk.get("message", {})
             delta: dict[str, Any] = {}
             if first:
                 delta["role"] = "assistant"
                 first = False
-            if content := message.get("content"):
+            content = message.get("content")
+            if content and not seen_text:
+                content = content.lstrip()
+                seen_text = bool(content)
+            if content:
                 delta["content"] = content
             if tool_calls := message.get("tool_calls"):
                 delta["tool_calls"] = tool_calls
