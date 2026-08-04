@@ -62,6 +62,13 @@ body {
   color: var(--text);
   font: 14px/1.55 var(--sans);
   overflow: hidden;
+  /* Mobile browsers change viewport height as the URL bar hides, so `100%` leaves the
+     composer under the chrome or scrolls the whole page. `dvh` tracks the real height;
+     the `100%` line above stays as the fallback for anything that lacks it. */
+  height: 100dvh;
+  /* iOS zooms the page when a focused input is under 16px. Set here so the rule is in
+     one place — the textarea inherits it. */
+  -webkit-text-size-adjust: 100%;
 }
 
 /* Faint grid + scanlines. Low enough to read as texture, never as pattern. */
@@ -348,21 +355,59 @@ aside {
    exactly when the reply was long enough to be worth tracing.
    So under the breakpoint it becomes a drawer that slides in from the right
    rather than a row that falls underneath. Still on the side, at any width. */
-#drawerToggle { display: none; }
+#drawerToggle, #scrim { display: none; }
 
 @media (max-width: 880px) {
-  #app { grid-template-columns: minmax(0,1fr); grid-template-areas: "hd" "main"; grid-template-rows: auto minmax(0,1fr); }
+  #app {
+    height: 100dvh;
+    grid-template-columns: minmax(0,1fr);
+    grid-template-areas: "hd" "main";
+    grid-template-rows: auto minmax(0,1fr);
+  }
   aside {
-    position: fixed; top: 0; right: 0; bottom: 0; z-index: 20;
-    width: min(372px, 90vw);
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 30;
+    width: min(400px, 92vw);
     border-left: 1px solid var(--line-hot);
-    box-shadow: -22px 0 44px rgba(0,0,0,0.55);
+    box-shadow: -22px 0 44px rgba(0,0,0,0.6);
     transform: translateX(101%);
     transition: transform .18s ease-out;
   }
   aside.open { transform: none; }
+  /* A tap anywhere outside closes it. Without this the only way out is the small
+     header button, which is a poor target on a phone. */
+  #scrim {
+    display: block; position: fixed; inset: 0; z-index: 25;
+    background: rgba(0,0,0,0.55);
+    opacity: 0; pointer-events: none; transition: opacity .18s ease-out;
+  }
+  #scrim.on { opacity: 1; pointer-events: auto; }
   #drawerToggle { display: block; }
-  .msg { max-width: 92%; }
+
+  /* Reclaim width. The tagline and the status pills are desktop affordances; the
+     wordmark and the drawer button are what a phone needs. */
+  .tagline, .status { display: none; }
+  header { padding: 10px 12px; gap: 10px; }
+  .wordmark { font-size: 13px; letter-spacing: 0.22em; }
+  .reticle { width: 26px; height: 26px; }
+
+  #log { padding: 16px 14px 6px; gap: 14px; }
+  .msg { max-width: 94%; }
+  #composer { padding: 10px 14px 14px; }
+
+  /* Touch targets, and 16px on the textarea so iOS does not zoom on focus. */
+  textarea { font-size: 16px; min-height: 48px; }
+  button.act { padding: 0 16px; min-height: 48px; }
+  button.ghost, select { min-height: 36px; }
+  .msg .foot button { padding: 6px 10px; }
+  .mem-row button { padding: 7px 10px; }
+}
+
+/* Nothing may push the page sideways. A single overflowing element turns the whole
+   layout into a horizontally scrolling desktop page on a phone, which is what this
+   console did before the drawer existed. */
+@media (max-width: 880px) {
+  html, body { overflow-x: hidden; max-width: 100vw; }
+  pre, code, table { max-width: 100%; overflow-x: auto; }
 }
 </style>
 </head>
@@ -415,6 +460,8 @@ aside {
       </div>
     </div>
   </main>
+
+  <div id="scrim"></div>
 
   <aside>
     <section class="side-sec grow panel" style="border:none">
@@ -633,8 +680,8 @@ function renderTrace(meta, whenLabel) {
     ${cites}`;
 }
 
-function selectMessage(idx) {
-  openDrawer();
+function selectMessage(idx, explicit = false) {
+  openDrawer(explicit);
   document.querySelectorAll(".msg.bot").forEach((n) => n.classList.remove("selected"));
   const node = document.querySelector(`.msg.bot[data-idx="${idx}"]`);
   if (node) node.classList.add("selected");
@@ -714,7 +761,7 @@ function addBot() {
         (meta.remembered ? `<span class="chip remembered">remembered</span>` : "") +
         `<button type="button">trace</button>`;
       if (meta.remembered) refreshMemory();
-      foot.querySelector("button").onclick = () => selectMessage(idx);
+      foot.querySelector("button").onclick = () => selectMessage(idx, true);
       selectMessage(idx);
     },
   };
@@ -804,7 +851,7 @@ async function preview() {
   try {
     const meta = await (await fetch("/route/debug?prompt=" + encodeURIComponent(text))).json();
     renderTrace(meta, "preview");
-    openDrawer();
+    openDrawer(true);
   } catch (err) {
     $("#trace").innerHTML = `<p class="empty">Preview failed: ${esc(err.message)}</p>`;
   }
@@ -816,7 +863,18 @@ sendBtn.onclick = send;
 $("#preview").onclick = preview;
 
 const aside = document.querySelector("aside");
-$("#drawerToggle").onclick = () => aside.classList.toggle("open");
+const isDrawer = () => window.matchMedia("(max-width: 880px)").matches;
+
+function setDrawer(open) {
+  aside.classList.toggle("open", open);
+  $("#scrim").classList.toggle("on", open);
+}
+
+$("#drawerToggle").onclick = () => setDrawer(!aside.classList.contains("open"));
+$("#scrim").onclick = () => setDrawer(false);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") setDrawer(false);
+});
 
 $("#memToggle").onclick = () => {
   memCollapsed = !memCollapsed;
@@ -831,9 +889,13 @@ $("#histToggle").onclick = () => {
   applyHistCollapsed();
   if (!histCollapsed) refreshHistory();  // it went stale while hidden
 };
-// Opening the trace should follow from asking for a trace, so the drawer opens itself
-// when one is rendered. Only matters under the breakpoint; above it the class is inert.
-const openDrawer = () => aside.classList.add("open");
+/* Docked, the trace is always on screen and this is inert. As a drawer it covers most of
+   a phone, so it opens only when the trace was actually asked for — tapping "trace" or
+   "preview route". Opening automatically after every reply would cover the answer the
+   user is trying to read. */
+const openDrawer = (explicit = false) => {
+  if (!isDrawer() || explicit) setDrawer(true);
+};
 $("#reset").onclick = () => {
   messages = []; traces = [];
   log.innerHTML = "";
