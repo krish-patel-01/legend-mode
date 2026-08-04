@@ -419,6 +419,19 @@ bracketed citation and no answer, having matched the most recent pattern in the 
 The sources are known exactly at that point, so `app/api.py` appends a `Sources:` line
 itself — the same rule `app/guardrails.py` follows.
 
+**A question whose answer is already stored exactly is answered from the store**, not by a
+model — the same rule the guardrails follow for arithmetic. Asked to phrase it, the chat
+tier answered *"what is my name?"* with **"My name is Krish."** on roughly half of samples,
+reporting the user's identity as its own. Four prompt-side fixes were tried — a line about
+pronouns, quoting each fact, rewriting facts to third person at capture, changing which
+tier reads them — and the first three helped without settling it. Computing the answer
+settles it, and takes it from ~3 s to **0.05 s**.
+
+Deliberately narrow: only the name, only on unmistakable phrasings, only when a stored
+fact matches the template exactly. *"where do I work?"* still goes to the model, because
+forming that answer needs a verb this cannot conjugate. A wrong deterministic answer is
+worse than a wrong generated one — it arrives with the authority of a computed fact.
+
 On a follow-up, retrieval runs against the thread's **anchor** turn, not against "explain
 that". Corpus text is injected per request rather than kept in the conversation, so
 without that a grounded thread would lose its source material on turn two.

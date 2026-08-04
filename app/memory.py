@@ -138,6 +138,50 @@ def extract(text: str) -> Fact | None:
     return None
 
 
+# --- answering directly ------------------------------------------------------
+#
+# Some questions about a stored fact are answerable exactly, and asking a 1.2B to phrase
+# one is how "what is my name?" came back as **"My name is Krish."** on roughly half of
+# samples — the assistant reporting the user's identity as its own. Four fixes were tried
+# first: a prompt line about pronouns, quoting each fact, rewriting facts to third person
+# at capture, and changing which tier reads them. The first three helped and none settled
+# it, because the model is being asked to do a transformation it is not reliable at.
+#
+# So it is not asked. This is the same rule as app/guardrails.py — compute what can be
+# computed — applied to memory rather than arithmetic.
+#
+# Deliberately narrow. Only the name, only when the question is unmistakably about it,
+# and only when a stored fact matches the template exactly. Everything else still goes to
+# the model, because a wrong deterministic answer is worse than a wrong generated one: it
+# arrives with the authority of a computed fact.
+_NAME_QUESTION = re.compile(
+    # Any number of leading fillers — "okay so who am i" is two of them.
+    r"^\s*(?:(?:hey|hi|hello|so|ok(?:ay)?|and|umm?|well)[\s,]+)*"
+    r"(?:what(?:'s| is| was)?\s+my\s+name"
+    r"|who\s+am\s+i"
+    # "...what my name is" puts the verb after the noun, so it has to be optional here.
+    r"|do\s+you\s+(?:know|remember)\s+(?:what\s+)?my\s+name(?:\s+is)?"
+    r"|say\s+my\s+name"
+    r"|tell\s+me\s+my\s+name)"
+    r"\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+_STORED_NAME = re.compile(r"^The user's name is (?P<v>.+)$")
+
+
+def direct_answer(text: str, entries: list[dict[str, object]]) -> str | None:
+    """An exact answer from stored memory, or None to let the model handle it."""
+    if not _NAME_QUESTION.match(text.strip()):
+        return None
+    for entry in entries:
+        if entry.get("key") != "my name":
+            continue
+        match = _STORED_NAME.match(str(entry.get("text", "")))
+        if match:
+            return f"Your name is {match.group('v').strip(' .')}."
+    return None
+
+
 class MemoryStore:
     """Capture and recall over the shared VectorStore. Recall needs no code here — the
     rows are in the same table, so `Retrieval.lookup` already finds them."""

@@ -165,3 +165,47 @@ async def test_capture_costs_exactly_one_embed_and_no_model_call(mem):
     store_api, _ = mem
     await store_api.remember(memory.Fact("The user's name is Krish", key="my name"))
     assert store_api._client.calls == 1
+
+
+# --- answering directly ------------------------------------------------------
+
+
+_STORED = [
+    {"id": 1, "key": "my name", "text": "The user's name is Krish"},
+    {"id": 2, "key": "where i work", "text": "The user said they work on Legend Mode"},
+]
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["what is my name?", "What's my name", "who am I?", "do you know my name",
+     "do you remember what my name is?", "say my name", "tell me my name",
+     "hey what is my name?", "okay so who am i"],
+)
+def test_the_name_is_answered_from_the_store(question):
+    """Asked to phrase this, the 1.2B answered "My name is Krish." on roughly half of
+    samples — reporting the user's identity as its own. Four prompt-side fixes helped and
+    none settled it, so the answer is computed instead. Same rule as app/guardrails.py."""
+    assert memory.direct_answer(question, _STORED) == "Your name is Krish."
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "where do I work?",              # answerable, but needs a verb this cannot form
+        "what is my name and what I do?",  # compound: the second half needs the model
+        "make my name bold",             # an instruction, not a question
+        "what is the capital of France",
+        "my name is Krish",              # a statement being captured, not a question
+        "what is your name?",            # about the assistant, not the user
+    ],
+)
+def test_everything_else_still_goes_to_the_model(question):
+    """A wrong deterministic answer is worse than a wrong generated one — it arrives with
+    the authority of a computed fact — so this declines whenever it is not certain."""
+    assert memory.direct_answer(question, _STORED) is None
+
+
+def test_no_stored_name_means_no_direct_answer():
+    assert memory.direct_answer("what is my name?", []) is None
+    assert memory.direct_answer("what is my name?", [_STORED[1]]) is None

@@ -236,6 +236,24 @@ async def chat_completions(request: Request) -> Any:
             except OllamaError as exc:
                 log.warning("could not store memory: %s", exc)
 
+    # A question whose answer is already stored exactly is answered from the store, not by
+    # a model — the same rule app/guardrails.py follows for arithmetic. Only the name, and
+    # only on unmistakable phrasings; see app/memory.py for why this exists and why it is
+    # kept this narrow.
+    if mem is not None:
+        exact = memory.direct_answer(req.text, mem.entries())
+        if exact is not None:
+            decision.grounded = "memory"
+            history.add(prompt=req.text, tag=spec.tag, decision=decision)
+            result = {"message": {"role": "assistant", "content": exact}}
+            if body.get("stream"):
+                return StreamingResponse(
+                    _stream_prepared(result, spec.tag, completion_id, decision),
+                    media_type="text/event-stream",
+                    headers={"X-Legend-Route": _route_header(decision)},
+                )
+            return _to_openai_response(result, spec.tag, completion_id, decision)
+
     found = None
     if plan.retrieve and settings.retrieval_enabled and (store := _retrieval(request)):
         found = await store.lookup(retrieval_query)
