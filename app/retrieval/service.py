@@ -23,6 +23,10 @@ from app.retrieval.store import Hit, IndexMismatch, VectorStore
 
 log = logging.getLogger(__name__)
 
+# Kept in step with app.memory.SOURCE. Duplicated rather than imported because
+# app/memory.py builds on this package, and importing back would close the cycle.
+MEMORY_SOURCE = "memory"
+
 
 @dataclass(frozen=True)
 class RetrievalResult:
@@ -70,6 +74,23 @@ def as_system_note(result: RetrievalResult) -> str:
     return _PREAMBLE + "\n\n" + "\n\n".join(blocks)
 
 
+def _normalize_query(text: str) -> str:
+    """Trim trailing punctuation before embedding.
+
+    Measured, not tidiness. Against a stored "I work on Legend Mode":
+
+        "where do I work"    0.599
+        "where do I work?"   0.542
+
+    A question mark carries no meaning for retrieval and cost 0.057 cosine — enough to
+    drop the right answer below the threshold on one phrasing and not the other. The
+    alternative was lowering the cut-off to 0.50, which would have started matching
+    "I prefer short answers" (0.504) to a question about employment. Fix the query, not
+    the gate.
+    """
+    return text.strip().rstrip("?!.,;: \t\n")
+
+
 def as_citation_line(result: RetrievalResult) -> str:
     """The sources line appended to the reply. Deterministic, so it is always right."""
     return "Sources: " + ", ".join(result.citations)
@@ -79,17 +100,32 @@ class Retrieval:
     """Query-time wrapper over a VectorStore and the pinned embedder."""
 
     def __init__(self, client, embed_spec, store: VectorStore | None, *, top_k: int,
-                 min_score: float) -> None:
+                 min_score: float, memory_min_score: float | None = None) -> None:
         self._client = client
         self._embed_spec = embed_spec
         self._store = store
         self._top_k = top_k
         self._min_score = min_score
+        # Memories are one short sentence against an 800-character document chunk, and
+        # short-to-short cosine runs lower for the same relevance — see the note on
+        # Settings.retrieval_memory_min_score.
+        self._memory_min_score = (
+            min_score if memory_min_score is None else memory_min_score
+        )
         self._checked = False
+
+    def _threshold_for(self, hit: Hit) -> float:
+        return self._memory_min_score if hit.source == MEMORY_SOURCE else self._min_score
 
     @property
     def available(self) -> bool:
         return self._store is not None and len(self._store) > 0
+
+    @property
+    def store(self) -> VectorStore | None:
+        """The backing store. Exposed so app/memory.py can write to the same table
+        rather than standing up a second one."""
+        return self._store
 
     @property
     def size(self) -> int:
@@ -106,7 +142,7 @@ class Retrieval:
         assert self._store is not None
 
         try:
-            vectors = await self._client.embed(self._embed_spec, [text])
+            vectors = await self._client.embed(self._embed_spec, [_normalize_query(text)])
         except OllamaError as exc:
             log.warning("retrieval embed failed: %s", exc)
             return None
@@ -125,8 +161,14 @@ class Retrieval:
                 return None
             self._checked = True
 
-        hits = [h for h in self._store.search(vectors[0], self._top_k)
-                if h.score >= self._min_score]
+        # Over-fetch, then filter, then trim. Selecting `top_k` first and filtering after
+        # loses hits whenever the two sources have different thresholds: "where do I work"
+        # scored 0.599 against its own stored memory and was ranked below three document
+        # chunks at 0.61-0.63, all of which then failed the stricter document cut-off. The
+        # memory never reached its own threshold check, so the feature silently did
+        # nothing on exactly the query it was built for.
+        candidates = self._store.search(vectors[0], self._top_k * 4)
+        hits = [h for h in candidates if h.score >= self._threshold_for(h)][: self._top_k]
         if not hits:
             return None
         return RetrievalResult(hits=hits)

@@ -131,6 +131,17 @@ _LOOKUP = re.compile(
 # Shapes that should never trigger retrieval however lookup-ish they read. Arithmetic and
 # code are answered by computation, not by documents, and injecting a passage into either
 # is the failure mode the paper measured.
+# Questions about the user, which the corpus can answer once app/memory.py has stored
+# anything. Separate from `_LOOKUP` because these are not document-shaped: "do you
+# remember my name" opens with "do" and would never match a wh-question pattern.
+_PERSONAL = re.compile(
+    r"\bdo you (?:remember|know)\b|\bwhat did i (?:say|tell you|mention)\b"
+    r"|\bmy (?:name|birthday|job|address|email|phone|preference)\b"
+    r"|\bwho am i\b|\bwhat am i (?:working|doing)\b|\bwhere do i (?:live|work)\b"
+    r"|\bwhat do i (?:prefer|use|like)\b",
+    re.IGNORECASE,
+)
+
 _NOT_LOOKUP = re.compile(
     r"```|\bwrite (?:me )?(?:a|an|some)\b|\bdraft\b|\bbrainstorm\b|\bgive me \d"
     r"|\bidea(?:s)? for\b|\bpoem|\bstory\b|\bjoke\b",
@@ -317,6 +328,8 @@ def wants_retrieval(text: str) -> bool:
     # Nothing about the assistant's own identity is ever answered better from a document.
     if rules.is_self_identity(stripped):
         return False
+    if _PERSONAL.search(stripped):
+        return True
     if _NOT_LOOKUP.search(stripped):
         return False
     return bool(_LOOKUP.search(stripped))

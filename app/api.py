@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from app import adjudicate, effort, guardrails
+from app import adjudicate, effort, guardrails, memory
 from app.backends.ollama import OllamaError
 from app.persona import CORRECTION_NOTE, DISPUTE_NOTE, ensure_system_prompt
 from app.retrieval import service as retrieval_service
@@ -44,6 +44,10 @@ def _history(request: Request):
 
 def _retrieval(request: Request):
     return getattr(request.app.state, "retrieval", None)
+
+
+def _memory(request: Request):
+    return getattr(request.app.state, "memory", None)
 
 
 @router.get("/v1/models")
@@ -103,6 +107,36 @@ async def retrieval_status(request: Request) -> dict[str, Any]:
 async def route_history(request: Request, limit: int = 50) -> dict[str, Any]:
     """Recent routing decisions across all callers, newest first. Powers the console UI."""
     return {"entries": _history(request).recent(limit=min(limit, 200))}
+
+
+@router.get("/memory")
+async def memory_list(request: Request) -> dict[str, Any]:
+    """Everything the assistant has been told. Visible on purpose: a wrong fact you
+    cannot see is worse than no memory, because nothing explains the odd answers."""
+    store = _memory(request)
+    return {"enabled": store is not None, "entries": store.entries() if store else []}
+
+
+@router.post("/memory")
+async def memory_add(request: Request) -> dict[str, Any]:
+    """Store a fact directly, bypassing the capture patterns."""
+    store = _memory(request)
+    if store is None:
+        raise HTTPException(503, "memory is unavailable; no corpus database is open")
+    body = await request.json()
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "text must be a non-empty string")
+    saved = await store.remember(memory.Fact(text=text, key=body.get("key") or None))
+    return saved or {"stored": False, "reason": "already known"}
+
+
+@router.delete("/memory/{memory_id}")
+async def memory_forget(request: Request, memory_id: int) -> dict[str, Any]:
+    store = _memory(request)
+    if store is None:
+        raise HTTPException(503, "memory is unavailable; no corpus database is open")
+    return {"deleted": store.forget(memory_id)}
 
 
 @router.post("/v1/chat/completions")
@@ -191,6 +225,17 @@ async def chat_completions(request: Request) -> Any:
     #
     # Runs before the prompt is assembled because a hit can change which tier answers, and
     # the persona style is per-tier.
+    # Capture before retrieval, so "remember that I use uv, then what do I use?" works in
+    # one turn. Costs one embed (~15 ms) and only when a pattern matches, which is why the
+    # patterns in app/memory.py are narrow — no model call is involved either way.
+    if (mem := _memory(request)) is not None:
+        if (fact := memory.extract(req.text)) is not None:
+            try:
+                if saved := await mem.remember(fact):
+                    decision.remembered = str(saved["text"])
+            except OllamaError as exc:
+                log.warning("could not store memory: %s", exc)
+
     found = None
     if plan.retrieve and settings.retrieval_enabled and (store := _retrieval(request)):
         found = await store.lookup(retrieval_query)

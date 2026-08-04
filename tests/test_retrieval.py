@@ -188,6 +188,35 @@ async def test_a_relevant_hit_is_returned(store):
     assert found.citations == ["notes.md#Cats"]
 
 
+async def test_a_memory_is_not_crowded_out_by_documents(store):
+    """`top_k` selects before the per-source filter runs, so a memory can rank below
+    documents that then fail the stricter document threshold — and never get checked
+    against its own. Over-fetching first is what makes two thresholds work at all."""
+    store.set_embedder("legend/embed", 3)
+    store.replace_source(
+        "notes.md",
+        [(f"H{i}", f"document chunk number {i} with filler text") for i in range(3)],
+        [[0.80, 0.60, 0.0], [0.81, 0.59, 0.0], [0.82, 0.58, 0.0]],
+    )
+    store.replace_source("memory", [("my job", "I work on Legend Mode")], [[0.70, 0.71, 0.0]])
+
+    r = Retrieval(_StubClient((1.0, 0.0, 0.0)), _Spec(), store,
+                  top_k=3, min_score=0.95, memory_min_score=0.55)
+    found = await r.lookup("where do I work")
+    assert found is not None
+    assert found.citations == ["memory#my job"]
+
+
+def test_trailing_punctuation_is_stripped_before_embedding():
+    """A question mark cost 0.057 cosine — 0.599 for "where do I work" against 0.542 for
+    the same question with a "?" — which was the difference between recalling the right
+    memory and recalling nothing."""
+    from app.retrieval.service import _normalize_query
+    assert _normalize_query("where do I work?") == "where do I work"
+    assert _normalize_query("  what is my name?  ") == "what is my name"
+    assert _normalize_query("17 * 23") == "17 * 23"
+
+
 async def test_a_weak_hit_is_discarded(store):
     """The threshold is the real gate. Injecting a merely-plausible passage is how
     retrieval makes answers worse — measured at -5.0 GPQA points in the paper."""

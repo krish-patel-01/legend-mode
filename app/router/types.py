@@ -49,6 +49,11 @@ class RouteDecision(BaseModel):
     two models there is no independent critic for a reasoning-tier answer, and a system
     that silently skipped the check would look identical to one that passed it."""
 
+    remembered: str | None = None
+    """A fact stored from this turn, if the user stated one. Surfaced so capture is
+    visible rather than silent — a memory the user cannot see forming is one they cannot
+    correct."""
+
     retrieved: list[str] | None = None
     """Citations for corpus chunks injected into the prompt, if any cleared the score
     threshold. Empty is not the same as None: None means retrieval never ran."""
@@ -71,6 +76,8 @@ class RouteDecision(BaseModel):
             meta["adjudicated"] = self.adjudicated
         if self.retrieved is not None:
             meta["retrieved"] = self.retrieved
+        if self.remembered is not None:
+            meta["remembered"] = self.remembered
         return meta
 
 

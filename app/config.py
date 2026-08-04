@@ -133,6 +133,19 @@ class Settings(BaseSettings):
     # Calibrate with: uv run python scripts/ingest.py --probe "your question"
     retrieval_min_score: float = 0.66
 
+    # Memories need their own, lower cut-off. 0.66 was calibrated against 800-character
+    # document chunks; a memory is one short sentence, and short-to-short similarity runs
+    # lower for the same relevance. Measured against a stored "I work on Legend Mode":
+    #
+    #   "what is my name"       0.767  (its own fact)
+    #   "what am I working on"  0.677
+    #   "where do I work"       0.599  <- the right answer, missed at 0.66
+    #
+    # A false positive here is also far less costly than with documents: the worst case is
+    # showing the model something the user themselves said, not a passage that overrides
+    # correct parametric knowledge.
+    retrieval_memory_min_score: float = 0.55
+
     # Left unset until a name is picked. The system prompt (app/persona.py) reads
     # this and tells the model to say it doesn't have a name yet rather than either
     # inventing one or claiming to be ChatGPT/Claude/whatever it was trained near.

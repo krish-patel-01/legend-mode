@@ -19,6 +19,7 @@ from app.api import router as api_router
 from app.backends.ollama import OllamaClient
 from app.config import get_registry, get_route_table, get_settings
 from app.history import HistoryStore
+from app.memory import MemoryStore
 from app.retrieval import Retrieval, VectorStore
 from app.router.engine import RouterEngine
 
@@ -54,7 +55,13 @@ async def lifespan(app: FastAPI):
     app.state.engine = engine
     app.state.history = HistoryStore()
     app.state.settings = settings
-    app.state.retrieval = _open_retrieval(client, registry, settings)
+    retrieval = _open_retrieval(client, registry, settings)
+    app.state.retrieval = retrieval
+    # Same store, different source — see app/memory.py. Sharing it means memories go
+    # through the gates and the threshold that documents already do.
+    app.state.memory = (
+        MemoryStore(client, registry.embedder, retrieval.store) if retrieval else None
+    )
     log.info("legend-mode ready (router=%s)", engine.router_spec.tag)
 
     yield
@@ -91,6 +98,7 @@ def _open_retrieval(client, registry, settings) -> Retrieval | None:
         store,
         top_k=settings.retrieval_top_k,
         min_score=settings.retrieval_min_score,
+        memory_min_score=settings.retrieval_memory_min_score,
     )
 
 

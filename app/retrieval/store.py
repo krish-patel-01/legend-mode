@@ -166,6 +166,38 @@ class VectorStore:
         self._load()
         return len(chunks)
 
+    def add(self, source: str, heading: str, text: str,
+            vector: list[float] | np.ndarray) -> int:
+        """Append one chunk and return its id.
+
+        `replace_source` is wrong for memory: it drops everything from a source before
+        writing, which is right for re-ingesting a file and destructive for a store that
+        grows one fact at a time.
+        """
+        cur = self._db.execute(
+            "INSERT INTO chunks(source, ordinal, heading, text, vector) "
+            "VALUES(?, (SELECT COALESCE(MAX(ordinal), -1) + 1 FROM chunks WHERE source = ?), "
+            "?, ?, ?)",
+            (source, source, heading, text, np.asarray(vector, dtype=np.float32).tobytes()),
+        )
+        self._db.commit()
+        self._load()
+        return int(cur.lastrowid or 0)
+
+    def delete(self, chunk_id: int) -> bool:
+        cur = self._db.execute("DELETE FROM chunks WHERE id = ?", (chunk_id,))
+        self._db.commit()
+        self._load()
+        return cur.rowcount > 0
+
+    def rows_for(self, source: str) -> list[tuple[int, str, str]]:
+        """(id, heading, text) for one source, newest first. Powers listing memories."""
+        cur = self._db.execute(
+            "SELECT id, heading, text FROM chunks WHERE source = ? ORDER BY id DESC",
+            (source,),
+        )
+        return [(int(r[0]), r[1], r[2]) for r in cur.fetchall()]
+
     def drop_source(self, source: str) -> int:
         cur = self._db.execute("DELETE FROM chunks WHERE source = ?", (source,))
         self._db.commit()
