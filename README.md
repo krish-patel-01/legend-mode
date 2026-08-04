@@ -395,12 +395,23 @@ bge-small puts unrelated English around 0.5–0.6, so the default cut-off is 0.6
 above the naive midpoint. Re-probe after changing the corpus rather than trusting that
 number.
 
-**A retrieval hit escalates to the reasoning tier.** The roadmap's premise is that a
-grounded small model beats an ungrounded large one, and that assumes the small model can
-read. Handed the chunk saying *"the verifier is always the 1.2B and never the 350M"*, the
-350M answered *"The model that verifies answers is LFM2.5-350M"* — it inverted the source.
-Reading a passage and answering strictly from it is a different skill from recall, and it
-is the one the 1.2B has.
+**A retrieval hit escalates off the 350M.** The roadmap's premise is that a grounded small
+model beats an ungrounded large one, and that assumes the small model can read. Handed the
+chunk saying *"the verifier is always the 1.2B and never the 350M"*, the 350M answered
+*"The model that verifies answers is LFM2.5-350M"* — it inverted the source.
+
+It escalates to whatever `chat` runs on, not to the reasoning tier. That was the original
+rule and it stopped being right the moment `chat` itself became a 1.2B:
+
+| tier | same memory-backed question | |
+|---|---|---|
+| chat (1.2B instruct) | "Krish. Legend Mode." | correct, ~2–4 s |
+| reasoning | "Your name is Krish. You work on…" | correct, 11–25 s |
+| 350M | "My name is Krish. I work on…" | wrong |
+
+Both read it correctly, so the reasoning tier was charging 25 s for nothing — and on a
+formatting request (*"make my name bold"*) it spent 51.7 s and returned no content at all.
+Reading a passage is not a reasoning task.
 
 **Citations are computed, never requested.** The first version labelled each passage
 `[source#heading]` and asked the model to copy that; the 1.2B replied with only the
@@ -476,7 +487,8 @@ Environment variables (prefix `LEGEND_`), see `app/config.py`:
 - `LEGEND_RETRIEVAL_MIN_SCORE` — cosine cut-off, default `0.66`; calibrate with `--probe`
 - `LEGEND_RETRIEVAL_TOP_K` — chunks injected, default 3
 - `LEGEND_RETRIEVAL_CITE` — append the computed `Sources:` line, default true
-- `LEGEND_READER_ALIAS` — tier that answers from retrieved text, default `think`
+- `LEGEND_READER_ROUTE` — which *route's* model reads retrieved text, default `chat`, so
+  it tracks whatever that tier runs on rather than pinning an alias
 
 ## Tests
 

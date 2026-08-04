@@ -259,7 +259,7 @@ async def chat_completions(request: Request) -> Any:
         #
         # So escalating from instruct bought nothing and cost a tier swap. The 350M still
         # cannot be trusted with retrieved text, and that is the case this now covers.
-        reader = engine.registry.get(settings.reader_alias)
+        reader = engine.spec_for_route(settings.reader_route)
         if reader is not None and spec.alias == settings.router_alias:
             log.info(
                 "retrieval hit (%s); escalating %s -> %s to read it",

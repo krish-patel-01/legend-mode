@@ -170,6 +170,21 @@ class RouterEngine:
             return self._router_spec
         return self._registry.by_alias(alias)
 
+    def spec_for_route(self, name: str) -> ModelSpec | None:
+        """The model behind a named route, or None if the route isn't defined.
+
+        Lets callers name a *role* rather than an alias. app/api.py uses it to find the
+        reading tier, which should track whatever `chat` runs on rather than being pinned
+        to a quantisation-specific alias that drifts the next time a model is swapped.
+        """
+        try:
+            alias = self._routes.by_name(name).model
+        except KeyError:
+            return None
+        if alias == self._settings.router_alias:
+            return self._router_spec
+        return self._registry.get(alias)
+
     def lock_for(self, spec: ModelSpec) -> asyncio.Lock | None:
         return self._large_lock if spec.tier == "large" else None
 

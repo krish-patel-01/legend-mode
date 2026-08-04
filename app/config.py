@@ -114,12 +114,24 @@ class Settings(BaseSettings):
     # --- retrieval (app/retrieval/) ----------------------------------------
     retrieval_enabled: bool = True
 
-    # Which tier answers once a passage has been retrieved. Reading a document and
-    # answering strictly from it is a different skill from recalling a fact, and it is
-    # the one the 1.2B has. Measured: handed a chunk reading "the verifier is always the
-    # 1.2B and never the 350M", the 350M answered "The model that verifies answers is
-    # LFM2.5-350M" — it inverted the source. Retrieval only pays if the reader can read.
-    reader_alias: str = "think"
+    # Which *route's* model reads retrieved text, not an alias — so it tracks whatever
+    # `chat` runs on instead of pinning a quantisation-specific name that drifts.
+    #
+    # Escalation exists because the 350M cannot be trusted with a passage: handed a chunk
+    # saying "the verifier is always the 1.2B and never the 350M", it answered "The model
+    # that verifies answers is LFM2.5-350M". It inverted the source.
+    #
+    # It used to escalate to the reasoning tier, which was right when `chat` *was* the
+    # 350M and wrong afterwards. Asked the same memory-backed question:
+    #
+    #   chat tier (1.2B instruct)  "Krish. Legend Mode."                correct, ~2-4 s
+    #   reasoning tier             "Your name is Krish. You work on …"  correct, 11-25 s
+    #   350M                       "My name is Krish. I work on …"      wrong
+    #
+    # Both read it correctly, so the reasoning tier was paying 25 s for nothing — and on a
+    # formatting request ("make my name bold") it burned 51.7 s and returned no content at
+    # all. Reading a passage is not a reasoning task.
+    reader_route: str = "chat"
     retrieval_db: Path = ROOT / "data" / "corpus.db"
     retrieval_top_k: int = 3
 
