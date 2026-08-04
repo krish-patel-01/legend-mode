@@ -160,8 +160,24 @@ header {
 }
 .side-sec.collapsed .caret { transform: rotate(-90deg); }
 .side-sec.collapsed .side-body { display: none; }
-/* Collapsed, the section shrinks to its header and the trace takes the freed space. */
-aside.hist-collapsed { grid-template-rows: minmax(0,1fr) auto; }
+
+/* --- memory --- */
+.mem-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start;
+  padding: 7px 0; border-bottom: 1px solid rgba(46,33,24,0.6);
+}
+.mem-row .fact { font-size: 12px; color: var(--text-2); line-height: 1.45; word-break: break-word; }
+.mem-row .key {
+  display: block; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--amber-dim); margin-bottom: 2px;
+}
+.mem-row button {
+  font-family: var(--mono); font-size: 10px; line-height: 1;
+  background: none; border: 1px solid var(--line); color: var(--text-mute);
+  padding: 3px 6px; cursor: pointer;
+}
+.mem-row button:hover { border-color: var(--bad); color: var(--bad); }
+.chip.remembered { color: var(--amber-hi); border-color: var(--amber-dim); }
 
 /* ---------- main / chat ---------- */
 
@@ -257,13 +273,19 @@ button.ghost:hover { color: var(--amber-hi); border-color: var(--amber-dim); }
 
 /* ---------- side ---------- */
 
+/* Flex rather than grid: with three sections, two of which collapse, a row template
+   would need rewriting every time one is toggled. The trace grows; the collapsible
+   panels take their content up to a cap and scroll inside it. */
 aside {
   grid-area: side;
   border-left: 1px solid var(--line);
-  display: grid; grid-template-rows: minmax(0,1.35fr) minmax(0,1fr);
+  display: flex; flex-direction: column;
   min-height: 0; background: var(--bg);
 }
-.side-sec { display: grid; grid-template-rows: auto minmax(0,1fr); min-height: 0; }
+.side-sec { display: flex; flex-direction: column; min-height: 0; }
+.side-sec.grow { flex: 1 1 auto; }
+.side-sec.panelled { flex: 0 1 auto; max-height: 36%; }
+.side-sec.panelled.collapsed { flex: 0 0 auto; max-height: none; }
 .side-sec + .side-sec { border-top: 1px solid var(--line); }
 .side-body { overflow-y: auto; padding: 14px 15px; }
 
@@ -395,13 +417,20 @@ aside {
   </main>
 
   <aside>
-    <section class="side-sec panel" style="border:none">
+    <section class="side-sec grow panel" style="border:none">
       <div class="panel-head">decision trace <span class="rule"></span><span class="count" id="traceWhen"></span></div>
       <div class="side-body" id="trace">
         <p class="empty">No decision yet.<br>Send a message, or use <b>preview route</b> to see the cascade resolve without spending a generation.</p>
       </div>
     </section>
-    <section class="side-sec" id="histSec">
+    <section class="side-sec panelled" id="memSec">
+      <div class="panel-head toggle" id="memToggle" title="What the assistant has been told">
+        <span class="caret">&#9660;</span>memory
+        <span class="rule"></span><span class="count" id="memCount"></span>
+      </div>
+      <div class="side-body" id="memory"></div>
+    </section>
+    <section class="side-sec panelled" id="histSec">
       <div class="panel-head toggle" id="histToggle" title="Show or hide recent requests">
         <span class="caret">&#9660;</span>recent requests
         <span class="rule"></span><span class="count" id="histCount"></span>
@@ -473,7 +502,43 @@ let histCollapsed = localStorage.getItem(HIST_KEY) !== "0";
 
 function applyHistCollapsed() {
   $("#histSec").classList.toggle("collapsed", histCollapsed);
-  document.querySelector("aside").classList.toggle("hist-collapsed", histCollapsed);
+}
+
+/* Memory starts open. Unlike the request feed it is small, it changes rarely, and it is
+   the one panel the user has to be able to see in order to correct — a wrong fact that
+   is invisible is worse than no memory at all, because nothing explains the odd answers.
+   Only refetched on demand: memories change when the user states one, not on a timer. */
+const MEM_KEY = "legendmode.memory.collapsed";
+let memCollapsed = localStorage.getItem(MEM_KEY) === "1";
+
+function applyMemCollapsed() {
+  $("#memSec").classList.toggle("collapsed", memCollapsed);
+}
+
+async function refreshMemory() {
+  try {
+    const { enabled, entries } = await (await fetch("/memory")).json();
+    $("#memCount").textContent = entries.length ? entries.length : "";
+    if (!enabled) {
+      $("#memory").innerHTML = '<p class="empty">Memory is off — no corpus database open.</p>';
+      return;
+    }
+    $("#memory").innerHTML = entries.length ? entries.map((e) => `
+      <div class="mem-row" data-id="${e.id}">
+        <div class="fact">${e.key ? `<span class="key">${esc(e.key)}</span>` : ""}${esc(e.text)}</div>
+        <button type="button" title="Forget this">forget</button>
+      </div>`).join("")
+      : '<p class="empty">Nothing remembered yet.<br>Tell it something — <b>my name is …</b> — or say <b>remember that …</b>.</p>';
+
+    for (const row of document.querySelectorAll(".mem-row")) {
+      row.querySelector("button").onclick = async () => {
+        await fetch("/memory/" + row.dataset.id, { method: "DELETE" });
+        refreshMemory();
+      };
+    }
+  } catch {
+    $("#memory").innerHTML = '<p class="empty">Could not read memory.</p>';
+  }
 }
 
 async function refreshHistory() {
@@ -537,6 +602,9 @@ function renderTrace(meta, whenLabel) {
     chips.push(`<span class="chip on">retrieved &middot; ${meta.retrieved.length}</span>`);
   } else if (meta.retrieved) {
     chips.push('<span class="chip off">corpus: no match</span>');
+  }
+  if (meta.remembered) {
+    chips.push(`<span class="chip on">remembered &middot; ${esc(meta.remembered)}</span>`);
   }
   if (meta.adjudicated) {
     const a = meta.adjudicated;
@@ -643,7 +711,9 @@ function addBot() {
         `<span>&middot; ${esc(eff.level || "")}</span>` +
         `<span>&middot; ${(elapsed / 1000).toFixed(1)}s</span>` +
         (meta.grounded ? `<span>&middot; ${esc(meta.grounded)}</span>` : "") +
+        (meta.remembered ? `<span class="chip remembered">remembered</span>` : "") +
         `<button type="button">trace</button>`;
+      if (meta.remembered) refreshMemory();
       foot.querySelector("button").onclick = () => selectMessage(idx);
       selectMessage(idx);
     },
@@ -748,6 +818,13 @@ $("#preview").onclick = preview;
 const aside = document.querySelector("aside");
 $("#drawerToggle").onclick = () => aside.classList.toggle("open");
 
+$("#memToggle").onclick = () => {
+  memCollapsed = !memCollapsed;
+  localStorage.setItem(MEM_KEY, memCollapsed ? "1" : "0");
+  applyMemCollapsed();
+  if (!memCollapsed) refreshMemory();
+};
+
 $("#histToggle").onclick = () => {
   histCollapsed = !histCollapsed;
   localStorage.setItem(HIST_KEY, histCollapsed ? "1" : "0");
@@ -774,6 +851,8 @@ input.addEventListener("input", () => {
 });
 
 applyHistCollapsed();
+applyMemCollapsed();
+refreshMemory();
 refreshStatus();
 refreshHistory();
 setInterval(refreshHistory, 8000);
