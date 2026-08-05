@@ -202,3 +202,18 @@ def test_note_tools_declare_the_notes_family_and_one_writer() -> None:
     built = notes.tools(notes.NotesConfig(None))
     assert {t.family for t in built} == {"notes"}
     assert [t.name for t in built if t.writes] == ["write_note"]
+
+
+def test_only_two_note_tools_are_offered() -> None:
+    """Measured: a third schema made the dispatcher truncate write_note's content."""
+    assert {t.name for t in notes.tools(notes.NotesConfig(None))} == {
+        "write_note",
+        "search_notes",
+    }
+
+
+def test_a_single_search_hit_returns_the_whole_note(vault: notes.NotesConfig) -> None:
+    """This is what lets read_note not exist."""
+    notes.write_note("Coffee", "black, no sugar, and never after four", vault)
+    out = notes.search_notes("coffee", vault)
+    assert "black, no sugar, and never after four" in out

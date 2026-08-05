@@ -29,6 +29,19 @@ MAX_CHARS = 800
 # retrieving it can only displace something useful.
 MIN_CHARS = 60
 
+# **Notes are exempt, because for a note brevity is the content.** Ingesting the vault
+# with the document threshold dropped every note written so far: "I take my coffee black"
+# is 22 characters and "the standup moved to Thursday at 10" is 35, so all four were
+# reported as "no chunks (too short?)" and the corpus gained nothing. The reasoning behind
+# MIN_CHARS still holds for prose — a 20-character fragment of an essay is noise — but a
+# deliberately written one-line note is the whole document.
+NOTE_MIN_CHARS = 12
+
+# `---` delimited YAML at the very top. Obsidian, Jekyll and this project's own
+# app/tools/notes.py all write it, and it is metadata rather than text: left in, a note's
+# embedding carries "created: 2026-08-05" and "source: lucy", which no question resembles.
+_FRONTMATTER = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n", re.DOTALL)
+
 
 @dataclass(frozen=True)
 class Chunk:
@@ -40,12 +53,19 @@ class Chunk:
         return f"{self.heading}\n\n{self.text}" if self.heading else self.text
 
 
-def chunk_markdown(content: str, *, max_chars: int = MAX_CHARS) -> list[Chunk]:
-    """Split markdown (or plain text, which simply has no headings) into chunks."""
+def chunk_markdown(
+    content: str, *, max_chars: int = MAX_CHARS, min_chars: int = MIN_CHARS
+) -> list[Chunk]:
+    """Split markdown (or plain text, which simply has no headings) into chunks.
+
+    `min_chars` is lowered to NOTE_MIN_CHARS for vault notes — see the note on that
+    constant for why a threshold tuned on documentation throws away every note.
+    """
+    content = _FRONTMATTER.sub("", content, count=1)
     chunks: list[Chunk] = []
     for heading, body in _sections(content):
         for piece in _pack(body, max_chars):
-            if len(piece) >= MIN_CHARS:
+            if len(piece) >= min_chars:
                 chunks.append(Chunk(heading=heading, text=piece))
     return chunks
 

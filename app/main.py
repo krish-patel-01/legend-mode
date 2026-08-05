@@ -22,6 +22,7 @@ from app.history import HistoryStore
 from app.memory import MemoryStore
 from app.retrieval import Retrieval, VectorStore
 from app.router.engine import RouterEngine
+from app.tools.registry import build_registry
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -62,6 +63,9 @@ async def lifespan(app: FastAPI):
     app.state.memory = (
         MemoryStore(client, registry.embedder, retrieval.store) if retrieval else None
     )
+    # Built once: the families are fixed at startup and each Tool holds only a callable
+    # and a schema, so there is nothing per-request to rebuild.
+    app.state.tools = build_registry(settings) if settings.tools_enabled else None
     log.info("legend-mode ready (router=%s)", engine.router_spec.tag)
 
     yield

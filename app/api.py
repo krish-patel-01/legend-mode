@@ -19,7 +19,14 @@ from fastapi.responses import StreamingResponse
 
 from app import adjudicate, effort, guardrails, memory
 from app.backends.ollama import OllamaError
-from app.persona import CORRECTION_NOTE, DISPUTE_NOTE, ensure_system_prompt
+from app.persona import (
+    CORRECTION_NOTE,
+    DISPUTE_NOTE,
+    TOOL_RESULT_NOTE,
+    ensure_system_prompt,
+)
+from app.tools import dispatch
+from app.tools import gate as tools_gate
 from app.retrieval import service as retrieval_service
 from app.router.engine import anchor_text, extract_text, has_images
 from app.router.types import RouteRequest
@@ -297,6 +304,35 @@ async def chat_completions(request: Request) -> Any:
             )
     decision.effort = plan.as_meta()
 
+    # --- tools ---------------------------------------------------------------
+    #
+    # After grounding and retrieval, and before the prompt is assembled. The ordering is
+    # not arbitrary: a guardrail has already computed an exact answer when `grounding` is
+    # set, and a tool could then only disagree with it, so the gate is told to stay shut.
+    #
+    # The dispatcher is a *different model* from the one that answers, and the answering
+    # model never sees a tool schema. Both of those are measured — see app/tools/gate.py
+    # for the table, and app/tools/dispatch.py for why the split exists at all.
+    tool_run = None
+    tool_registry = getattr(request.app.state, "tools", None)
+    if tool_registry is not None and settings.tools_enabled:
+        families = tools_gate.wanted(
+            req.text,
+            enabled=set(settings.tool_families),
+            grounded=grounding is not None,
+        )
+        if families:
+            dispatcher = engine.registry.get(settings.tool_dispatcher_alias)
+            if dispatcher is not None:
+                tool_run = await dispatch.run(
+                    text=req.text,
+                    registry=tool_registry,
+                    families=families,
+                    dispatcher_spec=dispatcher,
+                    client=client,
+                )
+                decision.tools = tool_run.as_meta()
+
     # Routing (`req`) was computed from the caller's original messages above; the
     # persona system prompt is added only for generation, so it never influences
     # which tier gets picked.
@@ -312,6 +348,13 @@ async def chat_completions(request: Request) -> Any:
         chat_messages = _append_system(chat_messages, DISPUTE_NOTE)
     elif decision.followup == "correction":
         chat_messages = _append_system(chat_messages, CORRECTION_NOTE)
+
+    if tool_run is not None and tool_run.ran:
+        # The results go on as `role: "tool"` turns, and the note goes on the system
+        # prompt. The note is not an explanation of the mechanism — it is there because
+        # the model refuses otherwise, answering "I don't have real-time capabilities" to
+        # a clock reading it was just handed. See app/persona.py for the measurement.
+        chat_messages = _append_system(chat_messages, TOOL_RESULT_NOTE) + tool_run.messages
 
     options = _openai_options(body, plan.max_tokens)
 

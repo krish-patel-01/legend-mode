@@ -227,6 +227,11 @@ def search_notes(query: str, config: NotesConfig) -> str:
         return f"No notes matching {query!r}."
 
     scored.sort(key=lambda row: (-row[0], row[1].stem))
+
+    # One hit means the question had one answer, so give the whole note instead of a
+    # snippet of it. This is also what lets `read_note` not exist — see `tools()`.
+    if len(scored) == 1:
+        return _rendered(scored[0][1])
     lines = []
     for _, path, body in scored[:MAX_SEARCH_HITS]:
         text = _strip_frontmatter(body)
@@ -244,6 +249,21 @@ def search_notes(query: str, config: NotesConfig) -> str:
 
 
 def tools(config: NotesConfig) -> list[Tool]:
+    """Two tools, not three, and the count is the point.
+
+    **Argument quality on the dispatcher degrades as the schema list grows.** Asked to
+    "make a note that the Q3 review is on the 14th" with only `write_note` offered, the
+    350M passed content "the Q3 review is on the 14th". With three notes tools offered it
+    passed "the Q3 review" — the fact silently amputated, leaving a note that records
+    nothing. Same model, same temperature, same prompt; only the number of schemas
+    differed.
+
+    Dropping `read_note` is the cheapest way to shorten the list, and it costs nothing:
+    it overlapped `search_notes` almost entirely, the dispatcher chose between them close
+    to arbitrarily, and `search_notes` now returns the whole note when exactly one
+    matches — which is what reading a note *is*. That also fixes the case where the user
+    names a note imprecisely, since searching never needed the exact title.
+    """
     return [
         Tool(
             name="write_note",
@@ -261,7 +281,11 @@ def tools(config: NotesConfig) -> list[Tool]:
                     },
                     "content": {
                         "type": "string",
-                        "description": "The note text itself, in markdown.",
+                        "description": (
+                            "The complete fact to record, as a full sentence. Keep every "
+                            "detail the user gave — dates, times, names, numbers. Do not "
+                            "shorten it to just the subject."
+                        ),
                     },
                 },
                 "required": ["title", "content"],
@@ -271,29 +295,19 @@ def tools(config: NotesConfig) -> list[Tool]:
             writes=True,
         ),
         Tool(
-            name="read_note",
-            description="Use to read back a note the user asks about by name.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "The note's title."}
-                },
-                "required": ["title"],
-            },
-            run=lambda title: read_note(title, config),
-            family="notes",
-        ),
-        Tool(
             name="search_notes",
             description=(
-                "Use when the user asks what they wrote about something, or what they "
-                "told you earlier, and you do not know the exact note title. Searches "
-                "titles and contents."
+                "Use when the user asks what they wrote or noted about something, or asks "
+                "you to read a note back. Searches titles and contents, and returns the "
+                "whole note when only one matches."
             ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Words to look for."}
+                    "query": {
+                        "type": "string",
+                        "description": "The subject to look for, a word or two.",
+                    }
                 },
                 "required": ["query"],
             },

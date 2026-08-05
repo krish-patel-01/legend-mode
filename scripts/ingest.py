@@ -2,9 +2,19 @@
 
     uv run python scripts/ingest.py                     # re-ingest the default docs
     uv run python scripts/ingest.py notes/ handbook.md  # ingest specific paths
+    uv run python scripts/ingest.py --vault             # the notes vault
     uv run python scripts/ingest.py --list              # what is indexed
     uv run python scripts/ingest.py --probe "who verifies answers here"
     uv run python scripts/ingest.py --rebuild           # drop everything first
+
+`--vault` is what closes the loop between the two ways this assistant remembers things.
+`app/tools/notes.py` writes notes when asked to; indexing them puts what it wrote into
+the same corpus as everything else, so recall no longer depends on the user phrasing a
+request in a way `app/tools/gate.py` recognises as a note operation. Measured before it
+existed: asked "when is the Q3 review" with a note saying the 14th, the gate matched
+nothing, no tool ran, and the model answered "next week" from nowhere. Explicit note
+operations stay with the tools; implicit recall belongs to retrieval, which is semantic
+and needs no pattern to match.
 
 `--probe` is the important one. The similarity threshold that decides whether retrieved
 text is injected at all cannot be guessed: bge-small puts unrelated English around 0.6
@@ -29,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.backends.ollama import OllamaClient  # noqa: E402
 from app.config import get_registry, get_settings  # noqa: E402
-from app.retrieval.chunk import chunk_markdown  # noqa: E402
+from app.retrieval.chunk import MIN_CHARS, NOTE_MIN_CHARS, chunk_markdown  # noqa: E402
 from app.retrieval.store import VectorStore  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -111,15 +121,29 @@ async def run(args: argparse.Namespace) -> int:
             store.clear()
             print("cleared existing index")
 
-        files = collect(args.paths or DEFAULT_SOURCES)
+        paths = list(args.paths)
+        if args.vault:
+            if settings.vault_path is None:
+                print("no vault configured; set LEGEND_VAULT_PATH", file=sys.stderr)
+                return 1
+            paths.append(str(settings.vault_path))
+
+        files = collect(paths or DEFAULT_SOURCES)
         if not files:
             print("nothing to ingest", file=sys.stderr)
             return 1
 
+        vault = settings.vault_path.resolve() if settings.vault_path else None
+
         total = 0
         for path in files:
             source = relative(path)
-            chunks = chunk_markdown(path.read_text(encoding="utf-8", errors="replace"))
+            # A note gets the lower floor; anything else keeps the document threshold.
+            in_vault = vault is not None and path.resolve().is_relative_to(vault)
+            chunks = chunk_markdown(
+                path.read_text(encoding="utf-8", errors="replace"),
+                min_chars=NOTE_MIN_CHARS if in_vault else MIN_CHARS,
+            )
             if not chunks:
                 print(f"  {source}: no chunks (too short?)")
                 continue
@@ -148,6 +172,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="*", help=f"files or dirs (default: {DEFAULT_SOURCES})")
+    ap.add_argument(
+        "--vault",
+        action="store_true",
+        help="ingest the notes vault named by LEGEND_VAULT_PATH",
+    )
     ap.add_argument("--rebuild", action="store_true", help="drop the whole index first")
     ap.add_argument("--list", action="store_true", help="show what is indexed")
     ap.add_argument("--probe", help="score a question against the corpus and exit")

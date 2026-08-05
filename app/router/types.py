@@ -58,6 +58,12 @@ class RouteDecision(BaseModel):
     """Citations for corpus chunks injected into the prompt, if any cleared the score
     threshold. Empty is not the same as None: None means retrieval never ran."""
 
+    tools: dict[str, Any] | None = None
+    """What app/tools/ did: which families the gate allowed, what was called, how long
+    each took. Present only when the gate opened, so an ordinary reply's metadata is not
+    padded with a permanently-empty field — and absent is itself the useful signal, since
+    the gate declining is the common and correct case."""
+
     def as_meta(self) -> dict[str, Any]:
         meta: dict[str, Any] = {
             "route": self.route,
@@ -78,6 +84,8 @@ class RouteDecision(BaseModel):
             meta["retrieved"] = self.retrieved
         if self.remembered is not None:
             meta["remembered"] = self.remembered
+        if self.tools is not None:
+            meta["tools"] = self.tools
         return meta
 
 
