@@ -1,0 +1,55 @@
+# SearXNG configuration for Legend Mode's `web` tool family. **This is the template.**
+#
+# `up.sh` copies it to settings.yml — which is gitignored — and substitutes a freshly
+# generated secret key. Edit this file for changes worth keeping; edit settings.yml for
+# local experiments.
+#
+# **The one line that matters is `json` under `search.formats`.** SearXNG ships with only
+# `html` enabled, and every JSON request returns 403 until json is listed here — which
+# looks like an auth failure rather than a config default, and is the single most common
+# thing to get stuck on.
+#
+# `use_default_settings: true` means this file is a patch over the shipped defaults rather
+# than a replacement, so upgrades keep working and only the differences live here.
+use_default_settings: true
+
+server:
+  # up.sh replaces this placeholder with a generated key when it writes settings.yml.
+  # It signs SearXNG's own preference cookies on a loopback-only instance, so it protects
+  # very little — but a literal key committed to a repository is a bad habit regardless,
+  # and it is what secret scanners flag.
+  secret_key: "GENERATED_BY_UP_SH"
+
+  # The bot limiter exists to stop strangers hammering a public instance. This one is
+  # bound to 127.0.0.1 and its only client is the assistant on this machine, so the
+  # limiter would be rate-limiting the user against themselves.
+  limiter: false
+  image_proxy: false
+
+search:
+  # html alone is the shipped default and is why /search?format=json 403s.
+  formats:
+    - html
+    - json
+
+  safe_search: 0
+  autocomplete: ""
+
+  # A search that hangs costs more than one that fails: the tool call is already inside a
+  # request the user is waiting on.
+  default_lang: "en"
+
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 10.0
+  pool_connections: 10
+  pool_maxsize: 10
+
+engines:
+  # ahmia and torch are Tor engines; they fail to register on a plain install and log an
+  # ERROR on every boot. Disabled so a genuine engine failure is visible in the log
+  # instead of being buried under two that always fail.
+  - name: ahmia
+    disabled: true
+  - name: torch
+    disabled: true

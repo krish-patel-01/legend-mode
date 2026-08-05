@@ -158,6 +158,28 @@ class Settings(BaseSettings):
     # correct parametric knowledge.
     retrieval_memory_min_score: float = 0.55
 
+    # --- tools (app/tools/) ------------------------------------------------
+    tools_enabled: bool = True
+
+    # Which families may ever be offered, regardless of what the gate thinks. Narrowing
+    # this is the hard override; the gate is the automatic one.
+    tool_families: list[str] = ["basics", "web"]
+
+    # The model that picks the tool. **Not the model that answers** — those are different
+    # jobs and measurably different models here. Over six tool cases and six prompts
+    # needing none, the 350M picked correctly 6/6 at 1.0 s while the 1.2B instruct managed
+    # 3/6 at 4.0 s, and every model holding tool schemas answered ordinary questions worse
+    # (the 1.2B refused to name the capital of France). Picking a function needs no world
+    # knowledge, which is why the smallest model wins it — the same reason it backs the
+    # stage-3 classifier. See the table in app/tools/gate.py.
+    tool_dispatcher_alias: str = "general"
+
+    # Local SearXNG for the `web` family. Needs `json` under `search.formats` in its
+    # config or every request 403s — see deploy/searxng/settings.yml.
+    searxng_url: str = "http://127.0.0.1:8080"
+    web_timeout: float = 15.0
+    web_max_results: int = 5
+
     # The name is picked, so this is a default rather than an env-only setting: the
     # named branch of app/persona.py is what carries the personality, and leaving it
     # unset would quietly ship the anonymous prompt to anyone cloning this.

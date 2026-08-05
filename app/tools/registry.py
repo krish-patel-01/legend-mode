@@ -146,8 +146,25 @@ class ToolRegistry:
 
 
 def build_registry(settings: Any = None, memory: Any = None) -> ToolRegistry:
-    """Assemble every available family. Import here to keep optional deps optional."""
+    """Assemble every available family. Imported here to keep optional deps optional."""
     from app.tools import basics
 
     registry = ToolRegistry(basics.tools())
+
+    # The web family needs a running SearXNG and `trafilatura` installed. Neither is
+    # guaranteed, and a missing one should cost the web tools rather than the process:
+    # `basics` has no such dependency and must keep working regardless.
+    try:
+        from app.tools import web
+
+        config = web.WebConfig(
+            searxng_url=getattr(settings, "searxng_url", "http://127.0.0.1:8080"),
+            timeout=getattr(settings, "web_timeout", 15.0),
+            max_results=getattr(settings, "web_max_results", 5),
+        )
+        for tool in web.tools(config):
+            registry.add(tool)
+    except ImportError as exc:  # pragma: no cover - depends on the install
+        log.warning("web tools unavailable: %s", exc)
+
     return registry
