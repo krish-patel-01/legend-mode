@@ -167,4 +167,12 @@ def build_registry(settings: Any = None, memory: Any = None) -> ToolRegistry:
     except ImportError as exc:  # pragma: no cover - depends on the install
         log.warning("web tools unavailable: %s", exc)
 
+    # Registered even when no vault is configured. The tools then report that clearly
+    # instead of vanishing, which is the difference between the assistant saying "no
+    # vault is set up" and it silently having no idea notes exist.
+    from app.tools import notes
+
+    for tool in notes.tools(notes.NotesConfig(getattr(settings, "vault_path", None))):
+        registry.add(tool)
+
     return registry

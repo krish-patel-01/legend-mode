@@ -59,6 +59,12 @@ def test_gate_declines_prompts_that_need_no_tool(prompt: str) -> None:
         ("what's the weather in Mumbai", gate.WEB),
         ("remember that I take my coffee black", gate.NOTES),
         ("make a note that the meeting moved to Thursday", gate.NOTES),
+        # Recall. Both of these reached no tool at all in the first live run.
+        ("what did I write about coffee", gate.NOTES),
+        ("read me the note about coffee", gate.NOTES),
+        ("show me my notes on the standup", gate.NOTES),
+        ("did I write anything about the standup", gate.NOTES),
+        ("what's in my notes about coffee", gate.NOTES),
     ],
 )
 def test_gate_recognises_real_requests(prompt: str, family: str) -> None:

@@ -108,6 +108,34 @@ _FULL = (
 )
 
 
+# Appended when a tool ran, to the model that writes the answer — never to the one that
+# picks the tool (see app/tools/dispatch.py for why those are different models).
+#
+# **It is there to break a prior, not to explain the mechanism.** Handed a correct tool
+# result as a `role: "tool"` turn, the 1.2B still answered "I don't have real-time
+# capabilities to check the current local time" and "I don't have access to your private
+# notes". That is the same refusal posture measured in app/tools/gate.py, arriving by a
+# different route: the model's belief that it cannot know something outranks the evidence
+# that it just did.
+#
+# The gain is accuracy, not only tone. Given "13:20:11 in Tokyo", the same model answered
+# "5:20 PM" without this note and "1:20 PM" with it. Six cases across the three families,
+# persona prompt held constant:
+#
+#   no note   2/6   refusals on the clock and notes cases, wrong conversion on the clock
+#   note      4/6   clock, search, machine state and one notes case all correct
+#
+# A third clause was tried and dropped — telling the model the user had not seen the tool
+# output and to quote it back. It fixed nothing and cost accuracy elsewhere, turning
+# "40.5 GB free of 97.7 GB" into "roughly 4 GB of available space". The two cases still
+# failing are single-sentence notes the model treats as self-evident, which is a small
+# enough residue to leave alone rather than tune the prompt around.
+TOOL_RESULT_NOTE = (
+    "You just looked this up with a tool, so you do have access to it and it is current. "
+    "Answer from it directly. Never say you lack access or real-time information when a "
+    "tool has already returned the answer."
+)
+
 # Appended when the sticky stage sees the user disputing the previous answer.
 #
 # Two failures to fix at once. The first is sycophancy: told "its incorrect", the 350M

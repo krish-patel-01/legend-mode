@@ -163,7 +163,7 @@ class Settings(BaseSettings):
 
     # Which families may ever be offered, regardless of what the gate thinks. Narrowing
     # this is the hard override; the gate is the automatic one.
-    tool_families: list[str] = ["basics", "web"]
+    tool_families: list[str] = ["basics", "web", "notes"]
 
     # The model that picks the tool. **Not the model that answers** — those are different
     # jobs and measurably different models here. Over six tool cases and six prompts
@@ -179,6 +179,12 @@ class Settings(BaseSettings):
     searxng_url: str = "http://127.0.0.1:8080"
     web_timeout: float = 15.0
     web_max_results: int = 5
+
+    # An Obsidian vault for the `notes` family — a plain folder of markdown files, which
+    # is all a vault is. Left unset here and configured in `.env`, which is gitignored:
+    # this is a path on one machine, not a project default, and the `notes` family simply
+    # reports itself unavailable when it is None.
+    vault_path: Path | None = None
 
     # The name is picked, so this is a default rather than an env-only setting: the
     # named branch of app/persona.py is what carries the personality, and leaving it

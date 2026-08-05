@@ -99,9 +99,18 @@ _WEB = re.compile(
 )
 
 _NOTES = re.compile(
+    # Writing something down.
     r"\b(?:remember (?:that|this|my)|don'?t forget|make a note|take a note"
     r"|save (?:this|that) (?:to|as) (?:a )?note|write (?:this|that) down"
-    r"|what did I (?:say|tell you) about|remind me (?:what|about))\b",
+    r"|jot (?:this|that) down|add (?:this|that) to my notes"
+    # Getting it back. The first version had only "what did I say about", and both live
+    # read requests missed: "what did I *write* about coffee" and "read me the note about
+    # coffee" reached no tool at all. Recall is phrased at least as many ways as capture.
+    r"|what did I (?:say|write|note|tell you) about"
+    r"|did I (?:write|note|say) anything about"
+    r"|(?:read|open|show|find|check|look up|search) (?:me )?(?:the |my |your )?notes?\b"
+    r"|(?:in|from) my notes\b|what'?s in my notes"
+    r"|remind me (?:what|about))\b",
     re.IGNORECASE,
 )
 
