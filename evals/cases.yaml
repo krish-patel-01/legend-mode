@@ -19,7 +19,7 @@
 # Fields:
 #   id           unique, kebab-case
 #   category     computable | reasoning | dispute | factual | persona | cheap |
-#                effort | retrieval
+#                effort | retrieval | tools
 #   prompt       single-turn input
 #   turns        multi-turn: a list of user messages; the real reply is fed back between
 #                them, and checks apply to the last turn unless the turn says otherwise
@@ -38,6 +38,7 @@
 #     effort       expected effort level (fast | standard | careful); a list means any
 #     max_tokens_below  the granted token budget must be under this
 #     retrieved    true if corpus text must have been injected, false if it must not
+#     tools        false asserts no tool ran; a name (or list) asserts which one did
 
 cases:
 
@@ -425,14 +426,90 @@ cases:
   # These are counted, not fixed. The point of listing them is that the failures are
   # visible in every run instead of being rediscovered by accident later.
 
-  - id: live-data-is-refused-not-invented
-    category: factual
+  - id: live-data-is-answered-from-a-tool
+    category: tools
     prompt: "what's the weather in Mumbai right now"
     samples: 2
-    note: "No tools tier. Expected behaviour is admitting no live access, not a number."
+    note: >
+      This case used to assert the opposite — that the reply admitted to having no live
+      access — and its note read "No tools tier". That premise expired when the web family
+      shipped, and the case then failed for the right reason: the assistant answered.
+      A case describing a limitation has to be re-pointed when the limitation goes, or it
+      starts defending the old behaviour.
+
+      What has not changed is the thing worth checking: a live figure must come from the
+      search, never from the model. `tools` asserts the call happened, so an answer
+      recalled from training data fails here even when it reads plausibly.
     expect:
-      any_of: ["don't have", "do not have", "cannot", "can't", "no access", "unable",
-               "real-time", "real time"]
+      tools: web_search
+      not_contains: ["I don't have access", "no real-time"]
+
+  # --- tools: the gate is the load-bearing part, so most of these assert it stays shut --
+
+  - id: a-search-request-reaches-the-web
+    category: tools
+    prompt: "search how much the new spiderman movie had earned till now"
+    note: >
+      Verbatim from a live session where this reached no tool at all and was answered
+      "I don't have real-time data" — one turn after the assistant agreed it had web
+      access. The gate had been written alongside its own test phrasings and matched only
+      those; an explicit search verb is now sufficient on its own.
+    expect:
+      tools: web_search
+
+  - id: the-clock-is-read-not-recalled
+    category: tools
+    prompt: "what time is it in Tokyo"
+    expect:
+      tools: get_time
+
+  - id: a-note-request-writes-a-note
+    category: tools
+    prompt: "make a note that the design review is on the 14th"
+    expect:
+      tools: write_note
+
+  - id: ordinary-questions-never-see-a-tool
+    category: tools
+    prompt: "what is the capital of France"
+    samples: 2
+    note: >
+      The most important tool case in the file, and it asserts that nothing happens.
+      Measured with four tool definitions attached, this exact prompt came back "I'm
+      sorry, but I can't provide that information" from a model that answers it correctly
+      with none present. Offering tools gives these models a refusal posture, so the gate
+      staying shut is what protects every turn that never needed one.
+    expect:
+      tools: false
+      contains: ["Paris"]
+
+  - id: creative-work-never-sees-a-tool
+    category: tools
+    prompt: "write me a haiku about winter"
+    note: "With tools attached this produced a web_search call for the word 'winter'."
+    expect:
+      tools: false
+
+  - id: explaining-a-tool-is-not-using-it
+    category: tools
+    prompt: "how does web search work"
+    note: >
+      Contains the word `search`, which is on its own enough to open the gate. Asking how
+      a thing works is never a request to use it, which is what the discussion guard is
+      for — this case exists because widening the gate to accept a bare "search" broke it.
+    expect:
+      tools: false
+
+  - id: a-computed-answer-suppresses-tools
+    category: tools
+    prompt: "what is 17 * 23"
+    note: >
+      The arithmetic guardrail has already produced the exact answer, so a tool could only
+      disagree with it. The gate is told to stay shut whenever grounding fired.
+    expect:
+      grounded: arithmetic
+      tools: false
+      number: 391
 
   - id: capital-of-australia
     category: factual
