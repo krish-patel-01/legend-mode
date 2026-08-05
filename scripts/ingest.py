@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.backends.ollama import OllamaClient  # noqa: E402
 from app.config import get_registry, get_settings  # noqa: E402
 from app.retrieval.chunk import MIN_CHARS, NOTE_MIN_CHARS, chunk_markdown  # noqa: E402
+from app.retrieval.service import _normalize_query  # noqa: E402
 from app.retrieval.store import VectorStore  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -107,8 +108,21 @@ async def run(args: argparse.Namespace) -> int:
             if not len(store):
                 print("corpus is empty; nothing to probe", file=sys.stderr)
                 return 1
-            vectors = await client.embed(embed_spec, [args.probe])
-            print(f"\nprobe: {args.probe!r}   (threshold is "
+            # **Normalised exactly as the service normalises it.** This did not used to
+            # be, and the discrepancy pointed the wrong way at the worst possible moment:
+            # probing "what is the current gold price?" reported 0.626 against a README
+            # chunk, comfortably below the 0.66 cut-off, while the live request scored the
+            # same pair at roughly 0.68 and injected it. The whole difference was the
+            # trailing question mark, which app/retrieval/service.py strips and this did
+            # not — worth 0.057 cosine, per the measurement in `_normalize_query`.
+            #
+            # A calibration instrument that disagrees with the thing it calibrates is
+            # worse than none, because every threshold set with it is set from the wrong
+            # number.
+            query = _normalize_query(args.probe)
+            vectors = await client.embed(embed_spec, [query])
+            shown = f"{args.probe!r}" + (f" -> {query!r}" if query != args.probe else "")
+            print(f"\nprobe: {shown}   (threshold is "
                   f"{settings.retrieval_min_score}, {len(store)} chunks indexed)\n")
             for hit in store.search(vectors[0], args.top_k):
                 mark = "USED " if hit.score >= settings.retrieval_min_score else "below"

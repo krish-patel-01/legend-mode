@@ -143,7 +143,22 @@ class Settings(BaseSettings):
     # around 0.6, so this is well above the naive midpoint on purpose — injecting a
     # merely-plausible passage is how retrieval makes answers worse rather than better.
     # Calibrate with: uv run python scripts/ingest.py --probe "your question"
-    retrieval_min_score: float = 0.66
+    #
+    # **Raised from 0.66 after a live false positive.** Asked "what is the current gold
+    # price?", retrieval injected README.md's Guardrails section at 0.666 and the answer
+    # came back citing it. Scored across the corpus afterwards:
+    #
+    #   which model verifies answers in this system   0.767   wanted
+    #   how does the router decide which model         0.782   wanted
+    #   what is the effort controller                  0.752   wanted
+    #   how do I add a new route -> Welcome.md         0.688   not wanted (vault boilerplate)
+    #   what is the current gold price -> README       0.666   not wanted
+    #
+    # 0.70 separates those with room on both sides. Note the false positives cluster just
+    # above the old cut-off rather than far below it: a threshold set from a handful of
+    # questions drifts as the corpus grows, and this one had only ever been checked
+    # against questions the corpus could actually answer.
+    retrieval_min_score: float = 0.70
 
     # Memories need their own, lower cut-off. 0.66 was calibrated against 800-character
     # document chunks; a memory is one short sentence, and short-to-short similarity runs

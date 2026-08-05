@@ -378,6 +378,33 @@ async def chat_completions(request: Request) -> Any:
                 )
                 decision.tools = tool_run.as_meta()
 
+                # A tool result is retrieved text by another name, so it gets the same
+                # escalation retrieval gets, for the same measured reason: the 350M cannot
+                # be trusted to read a passage. Observed live — "so search the gold price"
+                # routed to `trivial`, which would have left the 350M summarising search
+                # results. Only off the router tier; the 1.2B tiers read fine.
+                reader = engine.spec_for_route(settings.reader_route)
+                if tool_run.ran and reader is not None and spec.alias == settings.router_alias:
+                    log.info(
+                        "tool result (%s); escalating %s -> %s to read it",
+                        ", ".join(r.name for r in tool_run.results), spec.alias, reader.alias,
+                    )
+                    spec = reader
+                    decision.model = reader.alias
+                    decision.reason = (
+                        f"{decision.reason}; escalated to {reader.alias} to read tool output"
+                    )
+                    plan = effort.estimate(
+                        decision,
+                        text=req.text,
+                        tier_max_tokens=spec.default_max_tokens,
+                        grounded=grounding is not None,
+                        override=str(body.get("effort") or settings.default_effort),
+                        retrieval_text=retrieval_query,
+                        thinking=spec.thinking,
+                    )
+                    decision.effort = plan.as_meta()
+
     # Routing (`req`) was computed from the caller's original messages above; the
     # persona system prompt is added only for generation, so it never influences
     # which tier gets picked.

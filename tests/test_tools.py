@@ -29,6 +29,8 @@ NO_TOOLS = [
     "explain how to read a file in python",
     "what is a directory",
     "how does web search work",
+    "how does a search engine work",
+    "explain how google search ranks pages",
     "why do people take notes",
     "hi there",
     "thanks!",
@@ -57,6 +59,18 @@ def test_gate_declines_prompts_that_need_no_tool(prompt: str) -> None:
         ("search the web for LFM2.5 release notes", gate.WEB),
         ("what's the latest news about Artemis", gate.WEB),
         ("what's the weather in Mumbai", gate.WEB),
+        # Verbatim from a real session where every one of these reached no tool and got
+        # "I don't have real-time data" — one turn after the assistant agreed it had web
+        # access. The gate had been written alongside its own test phrasings and matched
+        # only those.
+        ("what is the current gold price?", gate.WEB),
+        ("so search the gold price in it", gate.WEB),
+        ("search how much the new spiderman movie had earned till now?", gate.WEB),
+        ("look up the price of bitcoin", gate.WEB),
+        ("what's the exchange rate for the rupee today", gate.WEB),
+        ("google the release date", gate.WEB),
+        ("find out who directed Dune", gate.WEB),
+        ("what is the share price of Apple right now", gate.WEB),
         ("remember that I take my coffee black", gate.NOTES),
         ("make a note that the meeting moved to Thursday", gate.NOTES),
         # Recall. Both of these reached no tool at all in the first live run.

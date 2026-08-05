@@ -90,11 +90,37 @@ _FILES = re.compile(
     re.IGNORECASE,
 )
 
+# **The first version of this only matched the phrasings it was written alongside, which
+# is the failure mode a hand-built gate is most prone to.** Four real requests in a row
+# reached no tool at all:
+#
+#   "what is the current gold price?"          `current (?:price)` needs them adjacent
+#   "so search the gold price in it"           `search (?:the )?web` needs the word "web"
+#   "search how much the spiderman movie
+#    had earned till now?"                     nothing matched at all
+#
+# and the assistant answered "I don't have real-time data" to each — after having agreed,
+# one turn earlier, that it did have web access. Three separate clauses each required a
+# collocation that nobody types.
+#
+# So the shape changed. An explicit search verb is now sufficient on its own: someone who
+# writes "search X" or "look up X" has asked for a search, whatever X is, and no further
+# evidence is needed. The rest are recency and market markers, which are the categories a
+# parametric model cannot answer from memory by definition.
 _WEB = re.compile(
-    r"\b(?:search (?:the )?web|google it|look (?:it |this )?up online|search online"
-    r"|latest news|current (?:news|price|weather|score)|what'?s happening"
-    r"|weather (?:in|at|for)\b|who won\b|fetch (?:the )?(?:url|page|site)"
-    r"|https?://)",
+    # An explicit instruction to go and look. Sufficient by itself.
+    r"\b(?:search|google|look up|search for|find out|look online)\b"
+    # Recency: things that are true now and were not true when the model was trained.
+    r"|\b(?:latest|current|today'?s|recent|breaking)\b"
+    r"|\b(?:right now|at the moment|these days|so far|till now|up to now|as of)\b"
+    # Markets and money.
+    r"|\b(?:price of|stock price|share price|exchange rate|how much (?:is|does|did|has))\b"
+    r"|\b\w+ price\b"
+    # Box office and similar running totals.
+    r"|\b(?:earned|grossed|made) (?:so far|to date|till now)\b|\bbox office\b"
+    # The originals, kept.
+    r"|\bwhat'?s happening\b|\bweather (?:in|at|for)\b|\bwho won\b"
+    r"|\bfetch (?:the )?(?:url|page|site)\b|https?://",
     re.IGNORECASE,
 )
 
@@ -127,6 +153,10 @@ _FAMILY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 # checked hard: these are the ones the raw model got wrong.
 _DISCUSSION = re.compile(
     r"\b(?:how (?:do|does|did|would|can) (?:i|you|we|it|they)\b"
+    # "how does web search work" is a request for an explanation that happens to contain
+    # the word `search`, and the clause above missed it because the subject is a noun
+    # rather than a pronoun. Asking how a thing *works* is never a request to use it.
+    r"|how (?:do|does|did)\b[^.?!]{0,40}\bwork\b"
     r"|explain|what is a|what'?s a|what does .{0,20} mean|difference between"
     r"|why (?:do|does|is|are)|write (?:me )?a (?:haiku|poem|story|song|joke)"
     r"|tell me a joke)",
