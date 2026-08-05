@@ -9,9 +9,14 @@
    Legend Mode console.
 
    An instrument, not a chat app that happens to log things. The router makes a
-   decision per request across five stages, picks an effort level, maybe grounds
-   or retrieves, maybe adjudicates — and none of that is visible anywhere else.
-   The trace panel is the point; the chat is how you feed it.
+   decision per request across five stages, picks an effort level, maybe grounds,
+   retrieves, calls a tool or adjudicates — and none of that is visible anywhere
+   else. The trace panel is the point; the chat is how you feed it.
+
+   The tool row follows the same rule as the rest of the panel: it appears only
+   when something happened. `meta.tools` is absent unless the gate opened, and
+   the gate declining is the common and correct case, so a permanent "no tools"
+   line would be noise that trains the eye to skip that part of the panel.
 
    One file, no build step, no dependencies. It is served straight out of
    app/static by the same process that answers the requests, which means there is
@@ -185,6 +190,7 @@ header {
 }
 .mem-row button:hover { border-color: var(--bad); color: var(--bad); }
 .chip.remembered { color: var(--amber-hi); border-color: var(--amber-dim); }
+.chip.tools { color: var(--amber-hi); border-color: var(--amber-dim); }
 
 /* ---------- main / chat ---------- */
 
@@ -315,6 +321,8 @@ aside {
 .kv dt { color: var(--text-mute); letter-spacing: 0.08em; text-transform: uppercase; font-size: 10px; padding-top: 1px; }
 .kv dd { margin: 0; color: var(--text-2); word-break: break-word; }
 .kv dd.hi { color: var(--amber-hi); }
+.kv dd .hi { color: var(--amber-hi); }
+.kv dd.bad, .kv dd .bad { color: var(--warn); }
 
 .meter { height: 5px; background: var(--panel-2); border: 1px solid var(--line); margin-top: 5px; }
 .meter i { display: block; height: 100%; background: linear-gradient(90deg, var(--amber-dim), var(--amber)); }
@@ -536,6 +544,18 @@ async function refreshStatus() {
       ? `<span class="pill">corpus <b>${r.chunks}</b> chunks &middot; &ge;${r.min_score}</span>`
       : '<span class="pill">corpus <b>empty</b></span>');
   } catch { /* retrieval is optional */ }
+  try {
+    /* A family whose backend is down still registers its tools, so listing them is not
+       enough — the pill goes amber when something is registered but cannot answer.
+       Otherwise the first sign of a stopped SearXNG is a slow failure inside a request. */
+    const t = await (await fetch("/tools/status")).json();
+    if (t.enabled && t.tools.length) {
+      const broken = Object.entries(t.health || {}).filter(([, v]) => v !== "ok");
+      bits.push(broken.length
+        ? `<span class="pill down">tools <b>${t.tools.length}</b> &middot; ${broken.map(([k, v]) => `${k}: ${v}`).join(", ")}</span>`
+        : `<span class="pill">tools <b>${t.tools.length}</b> &middot; ${t.families.join(", ")}</span>`);
+    }
+  } catch { /* tools are optional */ }
   $("#status").innerHTML = bits.join("");
 }
 
@@ -619,6 +639,13 @@ const STAGES = [
   ["fallback",   "default route"],
 ];
 
+/* Names of the tools that actually ran, "" when none did. Absent metadata and an empty
+   call list mean different things upstream, but both mean "show nothing" here. */
+function toolNames(meta) {
+  const calls = (meta && meta.tools && meta.tools.calls) || [];
+  return calls.map((c) => c.name).join(", ");
+}
+
 function renderTrace(meta, whenLabel) {
   if (!meta) return;
   $("#traceWhen").textContent = whenLabel || "";
@@ -658,9 +685,35 @@ function renderTrace(meta, whenLabel) {
     if (a.skipped) chips.push('<span class="chip warn">no critic available</span>');
     if (a.verdict) chips.push(`<span class="chip ${a.repaired ? "warn" : "on"}">adjudicated &middot; ${esc(a.verdict)}${a.repaired ? " &middot; repaired" : ""}</span>`);
   }
+  /* `meta.tools` is absent unless the gate opened, and that absence is the normal case —
+     the gate declining is what keeps tool schemas away from the ~90% of turns that need
+     none. So the chip only appears when something actually ran, rather than sitting there
+     permanently reading "no tools" and training the eye to ignore it. */
+  if (meta.tools) {
+    const t = meta.tools;
+    if (t.error) {
+      chips.push(`<span class="chip warn">tools &middot; failed</span>`);
+    } else if (t.calls && t.calls.length) {
+      const failed = t.calls.some((c) => !c.ok);
+      chips.push(`<span class="chip ${failed ? "warn" : "on"}">tools &middot; ${t.calls.map((c) => esc(c.name)).join(", ")}</span>`);
+    } else {
+      /* The gate allowed a family and the dispatcher declined to call anything. That is
+         the design working — a cheap second opinion on an over-eager pattern match — so
+         it is shown rather than hidden. */
+      chips.push(`<span class="chip off">tools offered &middot; none used</span>`);
+    }
+  }
 
   const cites = (meta.retrieved && meta.retrieved.length)
     ? `<dl class="kv"><dt>sources</dt><dd>${meta.retrieved.map(esc).join("<br>")}</dd></dl>` : "";
+
+  const toolRows = (meta.tools && meta.tools.calls && meta.tools.calls.length)
+    ? `<dl class="kv"><dt>tools</dt><dd>${meta.tools.calls.map((c) =>
+        `<span class="${c.ok ? "hi" : "bad"}">${esc(c.name)}</span> &middot; ${ms(c.ms)}`
+      ).join("<br>")}</dd>
+      <dt>dispatch</dt><dd>${esc((meta.tools.families || []).join(", ") || "—")} &middot; ${meta.tools.iterations || 0} round${meta.tools.iterations === 1 ? "" : "s"}</dd></dl>`
+    : (meta.tools && meta.tools.error
+        ? `<dl class="kv"><dt>tools</dt><dd class="bad">${esc(meta.tools.error)}</dd></dl>` : "");
 
   $("#trace").innerHTML = `
     <div class="rail">${rail}</div>
@@ -677,6 +730,7 @@ function renderTrace(meta, whenLabel) {
     </dl>
     ${eff.why ? `<div class="why">${esc(eff.why)}</div>` : ""}
     <div class="chips">${chips.join("")}</div>
+    ${toolRows}
     ${cites}`;
 }
 
@@ -758,9 +812,13 @@ function addBot() {
         `<span>&middot; ${esc(eff.level || "")}</span>` +
         `<span>&middot; ${(elapsed / 1000).toFixed(1)}s</span>` +
         (meta.grounded ? `<span>&middot; ${esc(meta.grounded)}</span>` : "") +
+        (toolNames(meta) ? `<span class="chip tools">${esc(toolNames(meta))}</span>` : "") +
         (meta.remembered ? `<span class="chip remembered">remembered</span>` : "") +
         `<button type="button">trace</button>`;
       if (meta.remembered) refreshMemory();
+      /* A note written by a tool is a memory the user should be able to see straight
+         away, same as one captured by app/memory.py. */
+      if (toolNames(meta).includes("write_note")) refreshMemory();
       foot.querySelector("button").onclick = () => selectMessage(idx, true);
       selectMessage(idx);
     },

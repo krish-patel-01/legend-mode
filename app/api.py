@@ -14,6 +14,7 @@ import time
 import uuid
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -107,6 +108,50 @@ async def retrieval_status(request: Request) -> dict[str, Any]:
         "sources": store.sources,
         "min_score": settings.retrieval_min_score,
         "top_k": settings.retrieval_top_k,
+    }
+
+
+@router.get("/tools/status")
+async def tools_status(request: Request) -> dict[str, Any]:
+    """Which tools exist and whether their backing services actually answer.
+
+    Reachability is probed rather than assumed. A tool whose backend is down is not an
+    error until someone asks a question that needs it, at which point it is a slow failure
+    inside a request the user is waiting on — and from the console it would otherwise look
+    identical to a tool that simply never fires.
+    """
+    settings = request.app.state.settings
+    registry = getattr(request.app.state, "tools", None)
+    if registry is None or not settings.tools_enabled:
+        return {"enabled": False, "families": [], "tools": []}
+
+    enabled = set(settings.tool_families)
+    listed = registry.for_families(enabled)
+
+    health: dict[str, Any] = {}
+    if "web" in enabled:
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as probe:
+                resp = await probe.get(
+                    f"{settings.searxng_url}/search",
+                    params={"q": "ping", "format": "json"},
+                )
+            health["web"] = (
+                "ok" if resp.status_code == 200
+                else ("no json format" if resp.status_code == 403 else f"http {resp.status_code}")
+            )
+        except Exception:  # noqa: BLE001 - any failure is the same news: it is not up
+            health["web"] = "unreachable"
+    if "notes" in enabled:
+        vault = settings.vault_path
+        health["notes"] = "ok" if (vault and vault.is_dir()) else "no vault"
+
+    return {
+        "enabled": True,
+        "families": sorted({t.family for t in listed}),
+        "tools": sorted(t.name for t in listed),
+        "dispatcher": settings.tool_dispatcher_alias,
+        "health": health,
     }
 
 
