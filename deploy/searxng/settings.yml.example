@@ -53,3 +53,17 @@ engines:
     disabled: true
   - name: torch
     disabled: true
+
+  # **brave and startpage are disabled because they rate-limit and CAPTCHA a
+  # loopback instance almost immediately.** Over one session's use the log held 36
+  # SearxEngineCaptchaException and 30 SearxEngineTooManyRequestsException, and
+  # /search reported them as `Suspended: too many requests` and `Suspended: CAPTCHA`.
+  #
+  # A suspended engine is not free. SearXNG waits on it before returning, which is part of
+  # why one live search took 56 seconds, and the failures bury real errors in the log. The
+  # aggregate loses nothing measurable: with both off, "weather ahmedabad" still returns
+  # 26 results led by Ventusky, AccuWeather and The Weather Channel.
+  - name: brave
+    disabled: true
+  - name: startpage
+    disabled: true

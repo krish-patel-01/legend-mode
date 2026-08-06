@@ -217,3 +217,69 @@ def test_a_single_search_hit_returns_the_whole_note(vault: notes.NotesConfig) ->
     notes.write_note("Coffee", "black, no sugar, and never after four", vault)
     out = notes.search_notes("coffee", vault)
     assert "black, no sugar, and never after four" in out
+
+
+# --- repairing an amputated argument -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("request_text", "expected"),
+    [
+        ("make a note that the retro is on Friday", "the retro is on Friday"),
+        ("note that the deploy window is 2am to 4am", "the deploy window is 2am to 4am"),
+        ("jot down that the invoice is due on the 30th", "the invoice is due on the 30th"),
+        ("write this down: the standup moved to Thursday", "the standup moved to Thursday"),
+        ("remember that I take my coffee black", "I take my coffee black"),
+        ("please can you make a note that the sync is at 4pm", "the sync is at 4pm"),
+    ],
+)
+def test_the_note_body_is_taken_from_the_request(request_text: str, expected: str) -> None:
+    assert notes.content_from_request(request_text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["what is the capital of France", "search the web for gold prices", "", "make a note"],
+)
+def test_non_note_requests_extract_nothing(text: str) -> None:
+    assert notes.content_from_request(text) is None
+
+
+def test_a_truncated_content_is_repaired_from_the_request(
+    vault: notes.NotesConfig,
+) -> None:
+    """The measured failure: the dispatcher passes the subject without the predicate."""
+    assert vault.vault is not None
+    notes.write_note(
+        "retro", "the retro", vault, request="make a note that the retro is on Friday"
+    )
+    body = (vault.vault / notes.SUBFOLDER / "retro.md").read_text(encoding="utf-8")
+    assert "the retro is on Friday" in body
+
+
+def test_a_good_content_is_left_alone(vault: notes.NotesConfig) -> None:
+    """Repair, not override — a rephrased or summarised note must survive."""
+    assert vault.vault is not None
+    notes.write_note(
+        "retro",
+        "Retro scheduled for Friday afternoon, room 2",
+        vault,
+        request="make a note that the retro is on Friday",
+    )
+    body = (vault.vault / notes.SUBFOLDER / "retro.md").read_text(encoding="utf-8")
+    assert "room 2" in body
+    assert "the retro is on Friday" not in body
+
+
+def test_repair_only_applies_to_an_opening_fragment(vault: notes.NotesConfig) -> None:
+    """A content that is longer but unrelated is not a truncation, so it stands."""
+    assert vault.vault is not None
+    notes.write_note(
+        "x", "something else entirely", vault, request="make a note that the retro is on Friday"
+    )
+    body = (vault.vault / notes.SUBFOLDER / "x.md").read_text(encoding="utf-8")
+    assert "something else entirely" in body
+
+
+def test_write_note_still_works_with_no_request(vault: notes.NotesConfig) -> None:
+    assert "Wrote a new note" in notes.write_note("t", "some content", vault)

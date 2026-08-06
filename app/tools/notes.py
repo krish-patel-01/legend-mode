@@ -101,12 +101,65 @@ def _unavailable(config: NotesConfig) -> str | None:
     return None
 
 
-def write_note(title: str, content: str, config: NotesConfig) -> str:
-    """Create a note, or append to it if it already exists."""
+# The frames people use to ask for a note. What follows one of these *is* the note, which
+# is a fact code can establish exactly and the dispatcher demonstrably cannot.
+_NOTE_FRAME = re.compile(
+    r"^\s*(?:(?:please\s+)?(?:can you\s+)?"
+    r"(?:make|take|add|write|save|jot|leave)\s+(?:me\s+)?(?:a\s+)?note\s*(?:that|about|saying)?"
+    r"|note\s+(?:that|down)|write\s+(?:this|that)\s+down\s*[:,]?"
+    r"|jot\s+down\s*(?:that)?"
+    r"|remember\s+(?:that|this)|don'?t\s+forget\s*(?:that)?)\s*[:,]?\s*(?P<body>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def content_from_request(text: str) -> str | None:
+    """The note body as the user actually phrased it, or None if this is not a note frame.
+
+    **Exists because the dispatcher amputates the fact, and prompting could not fix it.**
+    Asked to "make a note that the retro is on Friday" it passes content "the retro" — the
+    subject without the predicate, a note recording nothing. Measured across six such
+    requests, three lost their detail; the ones that survived ("write this down: X",
+    "remember that X") differ only in phrasing, not in difficulty.
+
+    Four attempts failed to shift it. Naming the mistake in the parameter description,
+    supplying a worked example of the exact failure, removing the quoted examples from the
+    tool description, and shortening the schema all moved the score around between 2/5 and
+    5/5 without ever fixing the frame that fails. What did emerge is the underlying
+    constraint: on this model total schema text trades tool-selection accuracy against
+    argument fidelity, so every description that makes the right tool get chosen makes its
+    arguments slightly worse.
+
+    That is a bad trade to keep paying when the answer is a regex. `app/guardrails.py`
+    makes the same argument for arithmetic and `app/memory.py` for remembered facts: where
+    code can establish something exactly, a model should not be asked to.
+    """
+    match = _NOTE_FRAME.match(text.strip())
+    if not match:
+        return None
+    body = match.group("body").strip().strip("\"'").strip()
+    return body or None
+
+
+def write_note(title: str, content: str, config: NotesConfig, request: str = "") -> str:
+    """Create a note, or append to it if it already exists.
+
+    `request` is the user's own words, supplied by the registry. It is used only to repair
+    a truncated `content`, never to replace one the model got right.
+    """
     problem = _unavailable(config)
     if problem:
         return problem
     assert config.vault is not None
+
+    # Repair, not override. The literal request wins only when the model's version is a
+    # strict opening fragment of it — which is exactly the amputation being fixed, and
+    # leaves a legitimately rephrased or summarised note alone.
+    literal = content_from_request(request) if request else None
+    if literal and len(literal) > len(content.strip()):
+        spoken = content.strip().lower().rstrip(".")
+        if not spoken or literal.lower().startswith(spoken):
+            content = literal
 
     if not content.strip():
         return "Nothing to write — the note content was empty."
@@ -290,9 +343,14 @@ def tools(config: NotesConfig) -> list[Tool]:
                 },
                 "required": ["title", "content"],
             },
-            run=lambda title, content: write_note(title, content, config),
+            run=lambda title, content, request="": write_note(
+                title, content, config, request
+            ),
             family="notes",
             writes=True,
+            # The dispatcher amputates the fact on "make a note that X is on Y"; the text
+            # after the frame is the note, and code can take it exactly.
+            wants_request=True,
         ),
         Tool(
             name="search_notes",

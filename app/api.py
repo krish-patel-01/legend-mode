@@ -375,6 +375,11 @@ async def chat_completions(request: Request) -> Any:
                     families=families,
                     dispatcher_spec=dispatcher,
                     client=client,
+                    # "then search it in the web" has no subject in it. `anchor_text` is
+                    # the last user turn that was not itself a follow-up, which is what
+                    # "it" refers to; without it the dispatcher searched for "latest news"
+                    # and returned CNN links to a question about the weather.
+                    context=req.anchor_text if dispatch.needs_context(req.text) else "",
                 )
                 decision.tools = tool_run.as_meta()
 

@@ -48,6 +48,16 @@ class Tool:
     family: str
     writes: bool = False
 
+    wants_request: bool = False
+    """Pass the user's original words to `run` as `request=`.
+
+    For tools that can establish an argument from the request exactly, where the
+    dispatcher only approximates it. `write_note` is the case: asked to "make a note that
+    the retro is on Friday" the model supplies content "the retro", and the text after the
+    frame is the note. Off by default — a tool that does not need the request should not
+    see it, since the whole point of the dispatcher is that tools take arguments rather
+    than prose."""
+
     def schema(self) -> dict[str, Any]:
         """This tool in the OpenAI/Ollama `tools` array format."""
         return {
@@ -106,7 +116,9 @@ class ToolRegistry:
     def schemas(self, families: set[str], *, allow_writes: bool = True) -> list[dict[str, Any]]:
         return [t.schema() for t in self.for_families(families, allow_writes=allow_writes)]
 
-    async def invoke(self, name: str, arguments: dict[str, Any] | None) -> ToolResult:
+    async def invoke(
+        self, name: str, arguments: dict[str, Any] | None, *, request: str = ""
+    ) -> ToolResult:
         """Run one tool. Never raises: a failure is a result the model has to see.
 
         A tool that raised and took the request down with it would make the whole loop
@@ -123,7 +135,10 @@ class ToolRegistry:
 
         started = time.perf_counter()
         try:
-            result = tool.run(**(arguments or {}))
+            kwargs = dict(arguments or {})
+            if tool.wants_request:
+                kwargs["request"] = request
+            result = tool.run(**kwargs)
             if inspect.isawaitable(result):
                 result = await result
             text = result if isinstance(result, str) else repr(result)

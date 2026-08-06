@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -137,6 +138,26 @@ def _parse_calls(message: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     return calls
 
 
+_REFERENCE = re.compile(
+    r"\b(?:it|that|this|them|those|these|the same|again)\b", re.IGNORECASE
+)
+
+
+def needs_context(text: str) -> bool:
+    """Does this request point at something said earlier?
+
+    A turn like "then search it in the web" carries no subject. Given only that, the
+    dispatcher called `web_search(query="latest news")` and the reply came back as a list
+    of CNN and NBC links — for a question that had been about the weather in Ahmedabad one
+    turn before.
+
+    Checked rather than always prepending, because context is not free on a model this
+    size: the prior turn is one more thing competing with the request for its attention.
+    Only turns that cannot be resolved alone pay for it.
+    """
+    return bool(_REFERENCE.search(text))
+
+
 async def run(
     *,
     text: str,
@@ -144,22 +165,27 @@ async def run(
     families: set[str],
     dispatcher_spec: Any,
     client: Any,
+    context: str = "",
     allow_writes: bool = True,
     max_iterations: int = MAX_ITERATIONS,
     stop_when_satisfied: bool = STOP_WHEN_SATISFIED,
 ) -> ToolRun:
     """Decide and execute. Returns a ToolRun whose `messages` carry the results.
 
-    `text` is the user's request alone — not the conversation. The dispatcher is choosing
-    a function for *this* turn, and prior turns mostly give a model this size more chances
-    to pick the wrong one.
+    `text` is the user's request. `context` is the previous question it refers back to,
+    supplied by the caller only when `needs_context` says the request cannot stand alone —
+    the dispatcher is choosing a function for *this* turn, and extra history mostly gives
+    a model this size more chances to pick the wrong one.
     """
     schemas = registry.schemas(families, allow_writes=allow_writes)
     run = ToolRun(messages=[], families=set(families))
     if not schemas:
         return run
 
-    convo: list[dict[str, Any]] = [{"role": "user", "content": text}]
+    # Phrased as one turn rather than a real exchange: the assistant's own previous reply
+    # is what the dispatcher would otherwise start summarising instead of acting on.
+    request = f"Earlier question: {context}\n\nFollow-up: {text}" if context.strip() else text
+    convo: list[dict[str, Any]] = [{"role": "user", "content": request}]
     seen: set[str] = set()
 
     for iteration in range(1, max_iterations + 1):
@@ -199,7 +225,7 @@ async def run(
 
         round_ok = True
         for name, arguments in calls:
-            result = await registry.invoke(name, arguments)
+            result = await registry.invoke(name, arguments, request=text)
             run.results.append(result)
             convo.append(result.as_message())
             round_ok &= result.ok

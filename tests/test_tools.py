@@ -30,6 +30,7 @@ NO_TOOLS = [
     "what is a directory",
     "how does web search work",
     "how does a search engine work",
+    "how does weather forecasting work",
     "explain how google search ranks pages",
     "why do people take notes",
     "hi there",
@@ -59,6 +60,10 @@ def test_gate_declines_prompts_that_need_no_tool(prompt: str) -> None:
         ("search the web for LFM2.5 release notes", gate.WEB),
         ("what's the latest news about Artemis", gate.WEB),
         ("what's the weather in Mumbai", gate.WEB),
+        # Verbatim: answered "I don't have access to real-time data". `weather (?:in|at|
+        # for)` needed the words adjacent and this has "today" between them.
+        ("what is the weather today in Ahmedabad?", gate.WEB),
+        ("what's the forecast for tomorrow", gate.WEB),
         # Verbatim from a real session where every one of these reached no tool and got
         # "I don't have real-time data" — one turn after the assistant agreed it had web
         # access. The gate had been written alongside its own test phrasings and matched
@@ -73,6 +78,10 @@ def test_gate_declines_prompts_that_need_no_tool(prompt: str) -> None:
         ("what is the share price of Apple right now", gate.WEB),
         ("remember that I take my coffee black", gate.NOTES),
         ("make a note that the meeting moved to Thursday", gate.NOTES),
+        # Frames notes.py could already parse but the gate rejected, so the extraction
+        # never ran and no note was written at all.
+        ("note that the deploy window is 2am to 4am", gate.NOTES),
+        ("jot down that the invoice is due on the 30th", gate.NOTES),
         # Recall. Both of these reached no tool at all in the first live run.
         ("what did I write about coffee", gate.NOTES),
         ("read me the note about coffee", gate.NOTES),

@@ -111,7 +111,10 @@ _WEB = re.compile(
     # An explicit instruction to go and look. Sufficient by itself.
     r"\b(?:search|google|look up|search for|find out|look online)\b"
     # Recency: things that are true now and were not true when the model was trained.
-    r"|\b(?:latest|current|today'?s|recent|breaking)\b"
+    # `today` is listed bare as well as possessive — "what is the weather today in
+    # Ahmedabad" matched neither `today'?s` nor the weather clause below, and was
+    # answered "I don't have access to real-time data".
+    r"|\b(?:latest|current|recent|breaking)\b|\btoday'?s?\b|\b(?:tonight|tomorrow)\b"
     r"|\b(?:right now|at the moment|these days|so far|till now|up to now|as of)\b"
     # Markets and money.
     r"|\b(?:price of|stock price|share price|exchange rate|how much (?:is|does|did|has))\b"
@@ -119,14 +122,23 @@ _WEB = re.compile(
     # Box office and similar running totals.
     r"|\b(?:earned|grossed|made) (?:so far|to date|till now)\b|\bbox office\b"
     # The originals, kept.
-    r"|\bwhat'?s happening\b|\bweather (?:in|at|for)\b|\bwho won\b"
+    # `weather` no longer requires an adjacent preposition. It only ever appears in a
+    # request for current conditions; "weather today in Ahmedabad" put a word between the
+    # two and fell through, which is a lot of fragility for a clause that never needed the
+    # preposition to disambiguate anything.
+    r"|\bwhat'?s happening\b|\bweather\b|\bwho won\b|\bforecast\b"
     r"|\bfetch (?:the )?(?:url|page|site)\b|https?://",
     re.IGNORECASE,
 )
 
 _NOTES = re.compile(
-    # Writing something down.
-    r"\b(?:remember (?:that|this|my)|don'?t forget|make a note|take a note"
+    # Writing something down. The verb frames are kept in step with `_NOTE_FRAME` in
+    # app/tools/notes.py, which extracts the note body from the same phrasings — two of
+    # them ("note that the deploy window is 2am to 4am", "jot down that the invoice is
+    # due") were handled there and rejected here, so the extraction never ran.
+    r"\b(?:remember (?:that|this|my)|don'?t forget"
+    r"|(?:make|take|add|leave|save|write|jot) (?:me )?(?:a )?note\b"
+    r"|note (?:that|down)\b|jot down\b"
     r"|save (?:this|that) (?:to|as) (?:a )?note|write (?:this|that) down"
     r"|jot (?:this|that) down|add (?:this|that) to my notes"
     # Getting it back. The first version had only "what did I say about", and both live

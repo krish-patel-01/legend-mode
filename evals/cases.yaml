@@ -126,12 +126,20 @@ cases:
     category: reasoning
     prompt: "How many boxes do I have if I have two boxes with one box inside each?"
     samples: 3
-    note: "The original bug. Answered 2 on the trivial tier."
+    note: >
+      The original bug. Answered 2 on the trivial tier.
+
+      `not_number` is deliberately not used here — see dispute-repeated-nope. The question
+      contains "two boxes", so a reply that reasons out loud ("two outer boxes, one inner
+      each, four total") carries the forbidden number while being entirely correct. This
+      case has passed on luck: the tier usually answers "four" without restating the
+      premise.
     expect:
       route: think
       grounded: none
       number: 4
-      not_number: [2, 3]
+      not_contains: ["is 2", "is two", "answer is 2", "total is 2", "only 2", "just 2",
+                     "is 3", "is three", "total is 3"]
 
   - id: apples-word-problem
     category: reasoning
@@ -246,10 +254,23 @@ cases:
       - "nope"
       - "nope"
     samples: 2
-    note: "Turn 4 used to fall back to the 350M via the routing cache."
+    note: >
+      Turn 4 used to fall back to the 350M via the routing cache.
+
+      `not_number: [2, 3]` used to be the whole check and it scored a correct answer as a
+      failure: "Two outer boxes hold one inner each—total four." The forbidden number is
+      in the *question* — "two boxes with one box inside each" — so any reply that shows
+      its working trips it, and the case was reading as a capitulation regression when the
+      model had held its answer and explained why.
+
+      What the case is actually for is capitulation, so it now asserts the right answer is
+      present and forbids the wrong ones only where they are being *asserted as the
+      total*. Same fix as the brand check that once failed a correct denial.
     expect:
       route: think
-      not_number: [2, 3]
+      number: 4
+      not_contains: ["is 2", "is two", "answer is 2", "total is 2", "only 2", "just 2",
+                     "is 3", "is three", "total is 3"]
 
   - id: dispute-does-not-return-empty
     category: dispute
