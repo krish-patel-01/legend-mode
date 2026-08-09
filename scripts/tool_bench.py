@@ -2,11 +2,19 @@
 
 **Result, 2026-08-09: no to the first, interesting-but-no to the second. Nothing adopted.**
 
-    job   arm             correct   decode   tok/q   grounded   refused
-    pick  350M              6/10      0.3s     21
-    pick  functiongemma     0/10      0.4s     25
-    read  1.2B instruct     2/5       1.4s     42       2/5        1/5
-    read  functiongemma     4/5       1.6s     94       4/5        0/5
+    job   arm                 correct   decode   tok/q   refused
+    pick  350M                  6/10      0.3s     21              greedy, 1 sample
+    pick  functiongemma         0/10      0.4s     25
+    read  1.2B/tool            15/20      1.1s     42     2/20     t=0.6, 4 samples
+    read  1.2B/assistant       11/20      1.2s     45     0/20
+    read  1.2B/prefill          9/20      0.9s     32     0/20
+    read  functiongemma        12/20      1.2s     83     0/20
+
+`read` is sampled at 0.6 rather than run greedily because the defect under test is a
+refusal that appears on some samples and not others; at temperature 0 it either always
+fires or never does, which measures the wrong thing precisely. The three `1.2B/*` rows are
+the tool-result *framings* in scripts/frames.py — see that file for why the shipped one
+stays despite having the only refusals.
 
 Read the `read` row with the replies, not off the score — the scorer is deliberately crude
 (a shared figure, no refusal phrase) and reciting the evidence passes it. What the models
@@ -35,11 +43,14 @@ Two findings worth more than the verdict:
    attached. So it is not one poisoned topic; it is an intermittent posture that lands on
    different cases run to run, which is why a single failing transcript reads as a rule.
 
-2. **FunctionGemma's frame removes refusals entirely, and the frame is portable.** Its
+2. **FunctionGemma's frame removes refusals on the 1.2B too — and does not help.** Its
    format puts the call and the result inside the *model's own turn*, so the evidence
    arrives as something the assistant already did rather than as something it was told
-   (see scripts/functiongemma.py). That is a prompt-shape lever we have not pulled on the
-   1.2B, and it costs nothing to try — much cheaper than adopting a second model.
+   (see scripts/functiongemma.py). Ported to the 1.2B it took refusals from 2/20 to 0/20
+   and accuracy from 15/20 to 11/20: "I don't have real-time capabilities" was replaced by
+   a $4,200–$4,300 range for a price the evidence printed as 4,280.81. Refuses nothing,
+   says nothing. The refusal is a symptom of not committing, not the cause — see
+   scripts/frames.py, which keeps the arms and the reasoning.
 
 `pick` is a clean loss and needs less interpretation: 0/10, mostly by emitting no call at
 all against seven tools whose descriptions were written for LFM2.5. Google reports 58%
@@ -97,6 +108,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import frames  # noqa: E402
 import functiongemma as fg  # noqa: E402
 import httpx  # noqa: E402
 
@@ -194,10 +206,16 @@ _REFUSAL = re.compile(
     re.IGNORECASE,
 )
 
-# Four or more digits, or anything with a decimal point — the shape of a price, a
-# temperature, a gross. Bare small integers are excluded because "1" and "2" appear in
-# list markers and match by accident.
-_FIGURE = re.compile(r"\d[\d,]{3,}(?:\.\d+)?|\d+\.\d+")
+# Three or more digits, or anything with a decimal point — the shape of a price, a
+# temperature, a gross. One and two digit numbers are excluded because they are list
+# markers as often as they are facts.
+#
+# **It was four digits until it scored a right answer wrong.** The evidence read
+# `Total $653M/Wk 2` and both models answered "$653 million"; three digits did not clear
+# the old bar, so a correct, grounded, well-phrased reply counted as a miss for every arm
+# on that case. Same failure as the `not_number` artifact in evals/cases.yaml: a scorer
+# tuned against the answers it expected to see rather than the ones it got.
+_FIGURE = re.compile(r"\d[\d,]{2,}(?:\.\d+)?|\d+\.\d+")
 
 
 def figures(text: str) -> set[str]:
@@ -267,12 +285,12 @@ async def ask_raw(raw: RawClient, tag: str, prompt: str, *, max_tokens: int) -> 
     )
 
 
-async def ask(client, spec, messages, *, tools=None, max_tokens=256) -> Call:
+async def ask(client, spec, messages, *, tools=None, max_tokens=256, temperature=0.0) -> Call:
     started = time.perf_counter()
     try:
         reply = await client.chat(
             spec, messages, tools=tools,
-            options={"num_predict": max_tokens, "temperature": 0.0},
+            options={"num_predict": max_tokens, "temperature": temperature},
         )
     except OllamaError as exc:
         return Call(seconds=time.perf_counter() - started, error=str(exc)[:200])
@@ -309,6 +327,15 @@ class Arm:
     spec: ModelSpec
     native: bool = False
     """Talk FunctionGemma's own format over raw `/api/generate` instead of `/api/chat`."""
+
+    frame: str = frames.TOOL
+    """How the tool result is presented — see app/tools/frame.py. Ignored when `native`."""
+
+    temperature: float = 0.0
+    """**The `read` arms run at 0.6, which is what models.yaml gives this tier in
+    production.** Greedy would be the cleaner comparison for anything else, but the defect
+    under test is a refusal that appears on some samples and not others, and at temperature
+    0 it either always fires or never does — measuring the wrong thing precisely."""
 
 
 async def run_pick(client, raw, arm: Arm, case: PickCase, schemas) -> Row:
@@ -348,17 +375,16 @@ async def run_read(client, raw, arm: Arm, case: ReadCase, schemas) -> Row:
             max_tokens=384,
         )
     else:
-        # Exactly the shape app/api.py hands the writer: the tool note as a system turn,
-        # the question, the assistant's call, and the result. No persona — this compares
-        # models, and persona length is a separate measured variable (cot_bench.py).
-        call = await ask(client, arm.spec, [
-            {"role": "system", "content": TOOL_RESULT_NOTE},
-            {"role": "user", "content": case.question},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"function": {"name": case.tool, "arguments": case.arguments}}
-            ]},
-            {"role": "tool", "content": case.result},
-        ], max_tokens=384)
+        # No persona — this compares frames and models, and persona length is a separate
+        # measured variable (see cot_bench.py's footnote).
+        messages = [{"role": "system", "content": TOOL_RESULT_NOTE}] + frames.build(
+            arm.frame,
+            question=case.question,
+            calls=[(case.tool, case.arguments, case.result)],
+            note=TOOL_RESULT_NOTE,
+        )
+        call = await ask(client, arm.spec, messages, max_tokens=384,
+                         temperature=arm.temperature)
     row = Row(arm=arm.name, case=case.name, seconds=call.seconds,
               generate_seconds=call.generate_seconds, tokens=call.tokens, error=call.error)
     if call.error:
@@ -434,11 +460,15 @@ def report(title: str, rows: list[Row], arms: list[str], *, read: bool) -> None:
     for case in dict.fromkeys(r.case for r in rows):
         print(f"  {case}")
         for arm in arms:
-            r = next((x for x in rows if x.arm == arm and x.case == case), None)
-            if r is None:
+            mine = [x for x in rows if x.arm == arm and x.case == case]
+            if not mine:
                 continue
-            mark = "." if r.ok else "X"
-            print(f"    {mark} {arm:<14}{r.detail}")
+            ok = sum(x.ok for x in mine)
+            tally = f"{ok}/{len(mine)}" if len(mine) > 1 else ("." if ok else "X")
+            # Show a failing sample when there is one: the successes all look alike and
+            # the failure is the thing worth reading.
+            shown = next((x for x in mine if not x.ok), mine[0])
+            print(f"    {tally:>5} {arm:<16}{shown.detail}")
 
 
 # --- driver --------------------------------------------------------------------
@@ -453,6 +483,8 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--capture", action="store_true", help="refresh the frozen evidence and exit")
     parser.add_argument("--job", choices=["pick", "read", "both"], default="both")
+    parser.add_argument("--repeat", type=int, default=4,
+                        help="samples per read case; the defect is stochastic, so >1")
     parser.add_argument("--json", type=Path, help="write raw rows here")
     args = parser.parse_args()
 
@@ -482,19 +514,25 @@ async def main() -> int:
 
         if args.job in ("read", "both"):
             cases = load_read_cases()
-            arms = [Arm("1.2B", registry_specs.by_alias("instruct-q3")),
-                    Arm("functiongemma", FUNCTIONGEMMA, native=True)]
-            print(f"\nread: {len(cases)} cases x {len(arms)} arms")
+            writer = registry_specs.by_alias("instruct-q3")
+            arms = [Arm(f"1.2B/{f}", writer, frame=f, temperature=0.6) for f in frames.FRAMES]
+            arms.append(Arm("functiongemma", FUNCTIONGEMMA, native=True))
+            print(f"\nread: {len(cases)} cases x {len(arms)} arms x {args.repeat} samples")
             reads: list[Row] = []
             for index, case in enumerate(cases):
-                order = arms[index % len(arms):] + arms[: index % len(arms)]
-                marks = []
-                for arm in order:
-                    row = await run_read(client, raw, arm, case, schemas)
-                    reads.append(row)
-                    marks.append(f"{arm.name} {'ok' if row.ok else 'X'}")
-                print(f"  [{index + 1}/{len(cases)}] {case.name:<10} {'  '.join(marks)}")
-            report("read — state the fact the tool returned", reads, [a.name for a in arms], read=True)
+                for sample in range(args.repeat):
+                    # Rotate on every sample, not every case: with repeats the run is long
+                    # enough that a fixed order would let the CPU heat correlate with arm.
+                    turn = (index * args.repeat + sample) % len(arms)
+                    marks = []
+                    for arm in arms[turn:] + arms[:turn]:
+                        row = await run_read(client, raw, arm, case, schemas)
+                        reads.append(row)
+                        marks.append(f"{arm.name} {'ok' if row.ok else 'X'}")
+                    print(f"  [{index + 1}/{len(cases)}.{sample + 1}] {case.name:<9} "
+                          f"{'  '.join(marks)}")
+            report("read — state the fact the tool returned", reads,
+                   [a.name for a in arms], read=True)
             rows += reads
     finally:
         await client.aclose()
