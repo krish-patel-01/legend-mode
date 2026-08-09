@@ -111,6 +111,22 @@ async def retrieval_status(request: Request) -> dict[str, Any]:
     }
 
 
+def web_health(status_code: int) -> str:
+    """What a status code from the SearXNG probe means for the console's health pill.
+
+    `400` is a pass, which is the whole point of the empty-query probe: SearXNG checks
+    the requested format *before* it checks that there is a query, so "No query" is
+    proof that `json` is allowed — reached without running a federated search.
+    """
+    if status_code == 403:
+        # The one config trap: SearXNG ships with only `html` in `search.formats`, and
+        # every JSON request 403s until it is added. See deploy/searxng/settings.yml.example.
+        return "no json format"
+    if status_code in (200, 400):
+        return "ok"
+    return f"http {status_code}"
+
+
 @router.get("/tools/status")
 async def tools_status(request: Request) -> dict[str, Any]:
     """Which tools exist and whether their backing services actually answer.
@@ -130,16 +146,25 @@ async def tools_status(request: Request) -> dict[str, Any]:
 
     health: dict[str, Any] = {}
     if "web" in enabled:
+        # **An empty query, deliberately.** This used to search for "ping", which made
+        # every page load fire a real federated search: 2.6 s against 11 ms, an outbound
+        # request to every configured engine, and a false `unreachable` whenever a cold
+        # SearXNG took longer than the timeout — which it does, so the console showed a
+        # red WEB pill for a backend that was fine. A health light that cries wolf is
+        # worse than none, because it trains the eye to skip the row it lives in.
+        #
+        # `q=` still passes through the format gate before the "no query" check, so one
+        # cheap request separates all three states that matter:
+        #   400  up, and `json` is in search.formats
+        #   403  up, but search.formats is missing json — the config trap in
+        #        deploy/searxng/settings.yml.example, still caught
+        #   —    connection refused: not up
         try:
             async with httpx.AsyncClient(timeout=4.0) as probe:
                 resp = await probe.get(
-                    f"{settings.searxng_url}/search",
-                    params={"q": "ping", "format": "json"},
+                    f"{settings.searxng_url}/search", params={"q": "", "format": "json"}
                 )
-            health["web"] = (
-                "ok" if resp.status_code == 200
-                else ("no json format" if resp.status_code == 403 else f"http {resp.status_code}")
-            )
+            health["web"] = web_health(resp.status_code)
         except Exception:  # noqa: BLE001 - any failure is the same news: it is not up
             health["web"] = "unreachable"
     if "notes" in enabled:

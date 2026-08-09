@@ -25,34 +25,54 @@
    Two things about this palette are functional rather than decorative:
      - Route colour is meaning, not garnish. trivial / chat / think keep the same
        hue everywhere they appear, so the history feed is scannable at a glance.
-     - Amber on near-black holds up at the contrast ratios this needs, and it is
-       the one accent that reads as "instrument" rather than "notification".
+     - Ice on blue-black holds up at the contrast ratios this needs, and it reads
+       as projected light rather than as ink on a card — which is the difference
+       between an instrument and a dashboard.
+
+   The palette is cyan because the brief asked for a Jarvis console, and that is
+   what a Jarvis console is. Everything else here is a choice made against that.
+
+   `think` is violet rather than a hotter cyan, and that is the one colour decision
+   worth defending. Escalation is not "more of the same tier"; it is a different
+   model doing a different job for 10x the latency. On a cyan field a brighter cyan
+   reads as emphasis, where a second hue reads as a change of kind — and it keeps
+   all three route colours distinguishable, which is the only job this palette
+   actually has to do.
+
+   **No web fonts, and that is a constraint rather than a taste.** The console is
+   served by the same process that answers the requests and has to work with the
+   network off, so a font CDN would be the one thing on the page that fails when
+   everything it exists to show is still working. The type carries its personality
+   through tracking and scale on system stacks instead.
    ============================================================================ */
 
 :root {
-  --bg:         #0a0706;
-  --bg-raise:   #120d09;
-  --panel:      #150f0a;
-  --panel-2:    #1c140d;
-  --line:       #2e2118;
-  --line-hot:   #4a3117;
+  --bg:         #04070c;
+  --bg-raise:   #08111a;
+  --panel:      #071019;
+  --panel-2:    #0b1826;
+  --line:       #143246;
+  --line-hot:   #1d5570;
 
-  --amber:      #ff8a1e;
-  --amber-hi:   #ffb057;
-  --amber-dim:  #b35f0f;
-  --amber-ghost:rgba(255,138,30,0.10);
+  --ice:        #71dbff;
+  --ice-hi:     #dff5ff;
+  --ice-dim:    #2f7f9f;
+  --ice-ghost:  rgba(113,219,255,0.08);
 
-  --text:       #f2e6da;
-  --text-2:     #c8b39c;
-  --text-mute:  #8a7663;
+  --text:       #dce9f2;
+  --text-2:     #9fb6c6;
+  --text-mute:  #63808f;
+  --text-ghost: #3c5566;
 
-  --ok:         #6fbf73;
-  --warn:       #e8b04b;
-  --bad:        #e0603f;
+  --ok:         #4fe0a8;
+  --warn:       #ffbe5c;
+  --bad:        #ff6f5e;
+  --bad-line:   #5c2b2a;
+  --warn-line:  #5c4726;
 
-  --route-trivial: #8a7663;
-  --route-chat:    #ffb057;
-  --route-think:   #ff6a1e;
+  --route-trivial: #5f8296;
+  --route-chat:    #71dbff;
+  --route-think:   #b18cff;
 
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
   --sans: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -76,17 +96,59 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
-/* Faint grid + scanlines. Low enough to read as texture, never as pattern. */
+/* Depth, not texture. A projected display sits *in* a volume, so the field is two
+   soft light sources and a survey grid that fades with distance — no scanlines. The
+   scanline pass this replaces was the tell that the page was a picture of a screen
+   rather than the screen. */
 body::before {
   content: "";
   position: fixed; inset: 0; pointer-events: none; z-index: 0;
   background:
-    linear-gradient(rgba(255,138,30,0.030) 1px, transparent 1px) 0 0 / 100% 3px,
-    linear-gradient(90deg, rgba(255,138,30,0.020) 1px, transparent 1px) 0 0 / 46px 100%,
-    linear-gradient(rgba(255,138,30,0.020) 1px, transparent 1px) 0 0 / 100% 46px,
-    radial-gradient(1100px 520px at 12% -12%, rgba(255,106,30,0.10), transparent 70%),
-    radial-gradient(900px 460px at 105% 8%, rgba(255,138,30,0.06), transparent 70%);
+    linear-gradient(90deg, rgba(113,219,255,0.022) 1px, transparent 1px) 0 0 / 64px 100%,
+    linear-gradient(rgba(113,219,255,0.016) 1px, transparent 1px) 0 0 / 100% 64px,
+    radial-gradient(1200px 620px at 10% -14%, rgba(113,219,255,0.10), transparent 72%),
+    radial-gradient(900px 520px at 104% 6%, rgba(177,140,255,0.055), transparent 70%),
+    radial-gradient(1400px 700px at 50% 118%, rgba(47,127,159,0.09), transparent 74%);
+  /* The grid is a floor plane: dense at the horizon, gone by the bottom of the view. */
+  mask-image: linear-gradient(180deg, #000 0%, #000 42%, rgba(0,0,0,0.35) 78%, transparent 100%);
 }
+
+/* ---------- the reactor ----------
+   The brand mark is the router's state, not a logo. Three rings, inner to outer, are
+   the three tiers a request can land on; `data-tier` lights the one that answered and
+   leaves the others as cold hairlines. It sweeps while a request is in flight and
+   settles when the answer arrives.
+
+   It earns the space because the tier is the single most load-bearing fact about any
+   reply — it sets the latency, the quality and half the trace panel — and until now it
+   was only legible as a word in a footer after the fact. */
+.reactor { width: 42px; height: 42px; flex: none; overflow: visible; }
+.reactor .ring { fill: none; stroke: var(--line-hot); stroke-width: 1; transition: stroke .25s ease-out, stroke-width .25s ease-out; }
+.reactor .sweep {
+  fill: none; stroke: var(--ice); stroke-width: 1.5; stroke-linecap: round;
+  opacity: 0; transform-origin: 50% 50%;
+}
+.reactor .core { fill: var(--ice-dim); transition: fill .25s ease-out, filter .25s ease-out; }
+.reactor .tick { stroke: var(--line-hot); stroke-width: 1; }
+
+/* Which ring is live. The colours are the same route tokens the tags and the history
+   feed use, so the mark and the label can never disagree. */
+.reactor[data-tier="trivial"] .r-trivial,
+.reactor[data-tier="chat"]    .r-chat,
+.reactor[data-tier="think"]   .r-think {
+  stroke: var(--lit); stroke-width: 2; filter: drop-shadow(0 0 6px var(--lit));
+}
+.reactor[data-tier="trivial"] { --lit: var(--route-trivial); }
+.reactor[data-tier="chat"]    { --lit: var(--route-chat); }
+.reactor[data-tier="think"]   { --lit: var(--route-think); }
+.reactor[data-tier] .core { fill: var(--lit); filter: drop-shadow(0 0 6px var(--lit)); }
+
+/* In flight: both sweeps run, counter-rotating. Nothing else moves. */
+.reactor.busy .sweep { opacity: 1; animation: orbit 1.6s linear infinite; }
+.reactor.busy .sweep.rev { animation-duration: 2.4s; animation-direction: reverse; }
+.reactor.busy .core { animation: breathe 1.6s ease-in-out infinite; }
+@keyframes orbit { to { transform: rotate(360deg); } }
+@keyframes breathe { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
 
 /* ---------- shell ---------- */
 
@@ -106,20 +168,16 @@ header {
   display: flex; align-items: center; gap: 18px;
   padding: 12px 20px;
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(255,138,30,0.05), transparent);
+  background: linear-gradient(180deg, rgba(113,219,255,0.05), transparent);
 }
-.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.reticle { width: 30px; height: 30px; flex: none; }
-.reticle .spin  { transform-origin: 50% 50%; animation: spin 9s linear infinite; }
-.reticle .spin2 { transform-origin: 50% 50%; animation: spin 6s linear infinite reverse; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.brand { display: flex; align-items: center; gap: 13px; min-width: 0; }
 
 .wordmark {
   font-family: var(--mono);
   font-size: 15px; font-weight: 600;
-  letter-spacing: 0.30em;
-  color: var(--amber-hi);
-  text-shadow: 0 0 18px rgba(255,138,30,0.35);
+  letter-spacing: 0.34em;
+  color: var(--ice-hi);
+  text-shadow: 0 0 20px rgba(113,219,255,0.4);
   white-space: nowrap;
 }
 .tagline {
@@ -134,11 +192,11 @@ header {
   padding: 4px 9px;
   border: 1px solid var(--line-hot);
   color: var(--text-2);
-  background: var(--amber-ghost);
+  background: var(--ice-ghost);
   white-space: nowrap;
 }
-.pill b { color: var(--amber-hi); font-weight: 600; }
-.pill.down { border-color: #5a2a1c; color: var(--bad); background: rgba(224,96,63,0.08); }
+.pill b { color: var(--ice-hi); font-weight: 600; }
+.pill.down { border-color: var(--bad-line); color: var(--bad); background: rgba(224,96,63,0.08); }
 
 /* ---------- panels ---------- */
 
@@ -147,7 +205,7 @@ header {
    a machined edge rather than a frame. */
 .panel::before, .panel::after {
   content: ""; position: absolute; width: 9px; height: 9px; pointer-events: none;
-  border-color: var(--amber-dim); border-style: solid; border-width: 0;
+  border-color: var(--ice-dim); border-style: solid; border-width: 0;
 }
 .panel::before { top: -1px; left: -1px;  border-top-width: 1px; border-left-width: 1px; }
 .panel::after  { bottom: -1px; right: -1px; border-bottom-width: 1px; border-right-width: 1px; }
@@ -157,7 +215,7 @@ header {
   padding: 9px 13px;
   border-bottom: 1px solid var(--line);
   font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.17em;
-  text-transform: uppercase; color: var(--amber);
+  text-transform: uppercase; color: var(--ice);
 }
 .panel-head .rule { flex: 1; height: 1px; background: linear-gradient(90deg, var(--line-hot), transparent); }
 .panel-head .count { color: var(--text-mute); letter-spacing: 0.08em; }
@@ -165,9 +223,9 @@ header {
 /* A collapsible section header. The caret is the affordance, so the whole strip is the
    hit target rather than a small button. */
 .panel-head.toggle { cursor: pointer; user-select: none; }
-.panel-head.toggle:hover { color: var(--amber-hi); }
+.panel-head.toggle:hover { color: var(--ice-hi); }
 .caret {
-  font-size: 9px; line-height: 1; color: var(--amber-dim);
+  font-size: 9px; line-height: 1; color: var(--ice-dim);
   transition: transform .15s ease-out; transform-origin: 50% 50%;
 }
 .side-sec.collapsed .caret { transform: rotate(-90deg); }
@@ -176,12 +234,12 @@ header {
 /* --- memory --- */
 .mem-row {
   display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start;
-  padding: 7px 0; border-bottom: 1px solid rgba(46,33,24,0.6);
+  padding: 7px 0; border-bottom: 1px solid rgba(20,50,70,0.55);
 }
 .mem-row .fact { font-size: 12px; color: var(--text-2); line-height: 1.45; word-break: break-word; }
 .mem-row .key {
   display: block; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
-  text-transform: uppercase; color: var(--amber-dim); margin-bottom: 2px;
+  text-transform: uppercase; color: var(--ice-dim); margin-bottom: 2px;
 }
 .mem-row button {
   font-family: var(--mono); font-size: 10px; line-height: 1;
@@ -189,8 +247,8 @@ header {
   padding: 3px 6px; cursor: pointer;
 }
 .mem-row button:hover { border-color: var(--bad); color: var(--bad); }
-.chip.remembered { color: var(--amber-hi); border-color: var(--amber-dim); }
-.chip.tools { color: var(--amber-hi); border-color: var(--amber-dim); }
+.chip.remembered { color: var(--ice-hi); border-color: var(--ice-dim); }
+.chip.tools { color: var(--ice-hi); border-color: var(--ice-dim); }
 
 /* ---------- main / chat ---------- */
 
@@ -207,6 +265,39 @@ main {
   scroll-behavior: smooth;
 }
 
+/* The empty log used to be a void the width of the window. It is the first thing
+   anyone sees, so it does the one job worth doing there: it teaches the route
+   colours, which are load-bearing everywhere else in this console — the mark, the
+   message spine, the tags, the history feed all encode tier as hue, and none of that
+   is legible until you have been told once. It is removed on the first message. */
+.log-empty { max-width: 520px; margin: auto 0; padding: 4px 0; }
+.log-empty h2 {
+  font-family: var(--mono); font-size: 11px; font-weight: 500;
+  letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--ice); margin: 0 0 16px;
+}
+.log-empty ul { list-style: none; margin: 0 0 18px; padding: 0; }
+.log-empty li {
+  display: grid; grid-template-columns: 10px auto 1fr; gap: 12px; align-items: baseline;
+  padding: 7px 0; border-bottom: 1px solid rgba(20,50,70,0.55);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-mute);
+}
+.log-empty li b {
+  font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase;
+  font-size: 10.5px; color: var(--text-2);
+}
+.log-empty .k {
+  width: 9px; height: 9px; border-radius: 50%; align-self: center;
+  border: 1px solid currentColor; box-shadow: 0 0 7px currentColor;
+}
+.log-empty .k.trivial { color: var(--route-trivial); }
+.log-empty .k.chat    { color: var(--route-chat); }
+.log-empty .k.think   { color: var(--route-think); }
+.log-empty p {
+  margin: 0; font-family: var(--mono); font-size: 11px; line-height: 1.75;
+  color: var(--text-ghost); border-left: 1px solid var(--line); padding-left: 12px;
+}
+
 .msg { display: flex; flex-direction: column; max-width: 78%; }
 .msg.user { align-self: flex-end; align-items: flex-end; }
 .msg.bot  { align-self: flex-start; }
@@ -221,8 +312,8 @@ main {
   background: var(--bg-raise);
   white-space: pre-wrap; word-wrap: break-word;
 }
-.msg.user .body { border-color: var(--line-hot); background: rgba(255,138,30,0.07); }
-.msg.bot .body  { border-left: 2px solid var(--tier, var(--amber-dim)); }
+.msg.user .body { border-color: var(--line-hot); background: rgba(113,219,255,0.07); }
+.msg.bot .body  { border-left: 2px solid var(--tier, var(--ice-dim)); }
 
 .msg .foot {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -235,8 +326,8 @@ main {
   background: none; border: 1px solid var(--line); color: var(--text-mute);
   padding: 2px 7px; cursor: pointer;
 }
-.msg .foot button:hover { border-color: var(--amber-dim); color: var(--amber-hi); }
-.msg.selected .body { box-shadow: -3px 0 0 -1px var(--amber); }
+.msg .foot button:hover { border-color: var(--ice-dim); color: var(--ice-hi); }
+.msg.selected .body { box-shadow: -3px 0 0 -1px var(--ice); }
 
 .tag {
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em;
@@ -247,28 +338,42 @@ main {
 .tag.chat    { color: var(--route-chat); }
 .tag.think   { color: var(--route-think); }
 
-.err { color: var(--bad); border-color: #5a2a1c !important; }
+.err { color: var(--bad); border-color: var(--bad-line) !important; }
 
-/* thinking indicator */
-.working { display: flex; align-items: center; gap: 10px; color: var(--amber); font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; }
-.working .bars { display: inline-flex; gap: 3px; }
-.working .bars i { width: 3px; height: 13px; background: var(--amber); animation: pulse 1.05s ease-in-out infinite; }
-.working .bars i:nth-child(2) { animation-delay: .13s; }
-.working .bars i:nth-child(3) { animation-delay: .26s; }
-.working .bars i:nth-child(4) { animation-delay: .39s; }
-@keyframes pulse { 0%,100% { transform: scaleY(0.35); opacity: .45; } 50% { transform: scaleY(1); opacity: 1; } }
+/* Working. A scan travelling left to right, not bouncing bars — the wait here is a
+   pipeline running, and a bar chart that goes nowhere says "loading" where a sweep
+   says "something is moving through". The elapsed clock beside it does the real work
+   (see addBot): on the reasoning tier this runs for minutes. */
+.working { display: flex; align-items: center; gap: 11px; color: var(--ice); font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; }
+.working .scan {
+  position: relative; width: 66px; height: 1px; flex: none;
+  background: var(--line-hot); overflow: visible;
+}
+.working .scan::after {
+  content: ""; position: absolute; top: -1px; left: 0; height: 3px; width: 22px;
+  background: linear-gradient(90deg, transparent, var(--ice), transparent);
+  box-shadow: 0 0 8px var(--ice);
+  animation: scan 1.5s cubic-bezier(.4,0,.6,1) infinite;
+}
+@keyframes scan { 0% { transform: translateX(-22px); } 100% { transform: translateX(66px); } }
+.working .elapsed { color: var(--text-2); }
 
 /* ---------- composer ---------- */
 
-#composer { border-top: 1px solid var(--line); padding: 12px 26px 16px; background: linear-gradient(0deg, rgba(255,138,30,0.04), transparent); }
+#composer { border-top: 1px solid var(--line); padding: 12px 26px 16px; background: linear-gradient(0deg, rgba(113,219,255,0.045), transparent); }
 .controls { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; flex-wrap: wrap; }
 label.ctl { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-mute); display: flex; align-items: center; gap: 6px; }
+/* The keyboard hint lived in the placeholder, where it wrapped to two lines on a phone
+   and got clipped — and where it was documenting a shortcut that does not exist on a
+   soft keyboard. Out here it fits, and it goes away at the width where it stops being
+   true. The placeholder is left to do one job: say what to type. */
+.hint { margin-left: auto; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--text-ghost); white-space: nowrap; }
 select, textarea, button {
   font-family: var(--mono); background: var(--bg-raise); color: var(--text);
   border: 1px solid var(--line); border-radius: 0;
 }
 select { font-size: 11px; padding: 4px 6px; }
-select:focus, textarea:focus { outline: none; border-color: var(--amber-dim); }
+select:focus, textarea:focus { outline: none; border-color: var(--ice-dim); }
 .row { display: flex; gap: 10px; align-items: stretch; }
 textarea {
   flex: 1; resize: none; padding: 10px 12px; font-size: 13.5px; font-family: var(--sans);
@@ -276,13 +381,13 @@ textarea {
 }
 button.act {
   padding: 0 20px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
-  cursor: pointer; background: var(--amber-ghost); border-color: var(--line-hot); color: var(--amber-hi);
+  cursor: pointer; background: var(--ice-ghost); border-color: var(--line-hot); color: var(--ice-hi);
   transition: background .12s, border-color .12s;
 }
-button.act:hover:not(:disabled) { background: rgba(255,138,30,0.20); border-color: var(--amber); }
+button.act:hover:not(:disabled) { background: rgba(113,219,255,0.18); border-color: var(--ice); }
 button.act:disabled { opacity: .38; cursor: default; }
 button.ghost { padding: 0 13px; font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer; color: var(--text-mute); }
-button.ghost:hover { color: var(--amber-hi); border-color: var(--amber-dim); }
+button.ghost:hover { color: var(--ice-hi); border-color: var(--ice-dim); }
 
 /* ---------- side ---------- */
 
@@ -312,30 +417,30 @@ aside {
   color: var(--text-mute); letter-spacing: 0.07em;
 }
 .stage .dot { width: 7px; height: 7px; border: 1px solid currentColor; margin-left: 3px; }
-.stage.hit { color: var(--amber-hi); }
-.stage.hit .dot { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 9px var(--amber); }
-.stage.past { color: #6b5a49; }
+.stage.hit { color: var(--ice-hi); }
+.stage.hit .dot { background: var(--ice); border-color: var(--ice); box-shadow: 0 0 9px var(--ice); }
+.stage.past { color: var(--text-ghost); }
 .stage .verdict { font-size: 10px; opacity: .85; }
 
 .kv { display: grid; grid-template-columns: 84px 1fr; gap: 5px 10px; font-family: var(--mono); font-size: 11px; margin-bottom: 14px; }
 .kv dt { color: var(--text-mute); letter-spacing: 0.08em; text-transform: uppercase; font-size: 10px; padding-top: 1px; }
 .kv dd { margin: 0; color: var(--text-2); word-break: break-word; }
-.kv dd.hi { color: var(--amber-hi); }
-.kv dd .hi { color: var(--amber-hi); }
+.kv dd.hi { color: var(--ice-hi); }
+.kv dd .hi { color: var(--ice-hi); }
 .kv dd.bad, .kv dd .bad { color: var(--warn); }
 
 .meter { height: 5px; background: var(--panel-2); border: 1px solid var(--line); margin-top: 5px; }
-.meter i { display: block; height: 100%; background: linear-gradient(90deg, var(--amber-dim), var(--amber)); }
+.meter i { display: block; height: 100%; background: linear-gradient(90deg, var(--ice-dim), var(--ice)); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 .chip {
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
   padding: 3px 8px; border: 1px solid var(--line-hot); color: var(--text-2);
-  background: var(--amber-ghost);
+  background: var(--ice-ghost);
 }
-.chip.on   { color: var(--amber-hi); border-color: var(--amber-dim); }
-.chip.warn { color: var(--warn); border-color: #5c4318; }
-.chip.off  { color: #6b5a49; border-color: var(--line); background: none; }
+.chip.on   { color: var(--ice-hi); border-color: var(--ice-dim); }
+.chip.warn { color: var(--warn); border-color: var(--warn-line); }
+.chip.off  { color: var(--text-ghost); border-color: var(--line); background: none; }
 
 .why {
   font-family: var(--mono); font-size: 10.5px; line-height: 1.65;
@@ -347,14 +452,14 @@ aside {
 .feed { display: flex; flex-direction: column; }
 .feed-row {
   display: grid; grid-template-columns: auto 1fr auto; gap: 9px; align-items: baseline;
-  padding: 6px 0; border-bottom: 1px solid rgba(46,33,24,0.6);
+  padding: 6px 0; border-bottom: 1px solid rgba(20,50,70,0.55);
   font-family: var(--mono); font-size: 10.5px; color: var(--text-mute);
 }
 .feed-row .prompt { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #33241a; }
+::-webkit-scrollbar-thumb { background: #17394e; }
 ::-webkit-scrollbar-thumb:hover { background: var(--line-hot); }
 
 /* The trace belongs beside the chat, not under it — reading a decision means
@@ -396,18 +501,48 @@ aside {
   .tagline, .status { display: none; }
   header { padding: 10px 12px; gap: 10px; }
   .wordmark { font-size: 13px; letter-spacing: 0.22em; }
-  .reticle { width: 26px; height: 26px; }
+  .reactor { width: 28px; height: 28px; }
 
   #log { padding: 16px 14px 6px; gap: 14px; }
   .msg { max-width: 94%; }
   #composer { padding: 10px 14px 14px; }
 
+  .hint { display: none; }
+
   /* Touch targets, and 16px on the textarea so iOS does not zoom on focus. */
-  textarea { font-size: 16px; min-height: 48px; }
+  textarea { font-size: 16px; min-height: 52px; }
   button.act { padding: 0 16px; min-height: 48px; }
   button.ghost, select { min-height: 36px; }
   .msg .foot button { padding: 6px 10px; }
   .mem-row button { padding: 7px 10px; }
+}
+
+/* ---------- quality floor ---------- */
+
+/* Keyboard focus has to be visible on a page where almost every control is a 1px
+   outline on dark glass — the default focus ring is nearly invisible here, and
+   `outline: none` on the inputs above would otherwise leave nothing at all. */
+:where(button, select, textarea, [tabindex]):focus-visible {
+  outline: 1px solid var(--ice);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(113,219,255,0.16);
+}
+.panel-head.toggle:focus-visible { outline: 1px solid var(--ice); outline-offset: -2px; }
+
+/* Everything that moves here is ambient — the reactor sweep, the scan, the drawer.
+   None of it carries information the elapsed clock and the trace panel don't also
+   state in text, so it can all stop without the console losing anything. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* The sweep is the only "busy" signal that is purely motion, so with animation off
+     it has to become a static state instead of vanishing. */
+  .reactor.busy .sweep { opacity: 1; }
+  .working .scan::after { animation: none; width: 100%; }
 }
 
 /* Nothing may push the page sideways. A single overflowing element turns the whole
@@ -424,16 +559,19 @@ aside {
 
   <header>
     <div class="brand">
-      <svg class="reticle" viewBox="0 0 40 40" fill="none" aria-hidden="true">
-        <circle cx="20" cy="20" r="17" stroke="#4a3117" stroke-width="1"/>
-        <g class="spin">
-          <path d="M20 3 a17 17 0 0 1 14.7 8.5" stroke="#ff8a1e" stroke-width="1.5" stroke-linecap="round"/>
-          <path d="M20 37 a17 17 0 0 1 -14.7 -8.5" stroke="#ff8a1e" stroke-width="1.5" stroke-linecap="round"/>
+      <svg class="reactor" id="reactor" viewBox="0 0 40 40" fill="none"
+           role="img" aria-label="Router idle"><title id="reactorTitle">Router idle</title>
+        <!-- Inner to outer: trivial, chat, think. The order is the escalation order. -->
+        <circle class="ring r-trivial" cx="20" cy="20" r="7.5"/>
+        <circle class="ring r-chat"    cx="20" cy="20" r="12.5"/>
+        <circle class="ring r-think"   cx="20" cy="20" r="17.5"/>
+        <path class="sweep"     d="M20 2.5 a17.5 17.5 0 0 1 15.2 8.75"/>
+        <path class="sweep rev" d="M20 32.5 a12.5 12.5 0 0 1 -10.8 -6.25"/>
+        <g class="tick">
+          <path d="M20 0.5 v2.5"/><path d="M20 37 v2.5"/>
+          <path d="M0.5 20 h2.5"/><path d="M37 20 h2.5"/>
         </g>
-        <g class="spin2">
-          <circle cx="20" cy="20" r="10.5" stroke="#b35f0f" stroke-width="1" stroke-dasharray="4 6"/>
-        </g>
-        <circle cx="20" cy="20" r="3.2" fill="#ff8a1e"/>
+        <circle class="core" cx="20" cy="20" r="3"/>
       </svg>
       <div>
         <div class="wordmark">LEGEND MODE</div>
@@ -445,7 +583,20 @@ aside {
   </header>
 
   <main>
-    <div id="log"></div>
+    <div id="log">
+      <div class="log-empty" id="logEmpty">
+        <h2>Three tiers, one endpoint</h2>
+        <ul>
+          <li><i class="k trivial"></i><b>trivial</b>greetings and one-liners, answered in about a second</li>
+          <li><i class="k chat"></i><b>chat</b>everyday questions, the tier most requests land on</li>
+          <li><i class="k think"></i><b>think</b>reasoning — and the only tier that can check an answer</li>
+        </ul>
+        <p>The router picks one per request. The mark in the corner lights the tier that
+        answered; the trace panel shows how it decided.<br>
+        Ask something, or use <b>preview route</b> to watch the cascade resolve without
+        spending a generation.</p>
+      </div>
+    </div>
     <div id="composer">
       <div class="controls">
         <label class="ctl">effort
@@ -461,9 +612,10 @@ aside {
         </label>
         <button class="ghost" id="preview" title="Route without generating (GET /route/debug)">preview route</button>
         <button class="ghost" id="reset">new thread</button>
+        <span class="hint">Enter sends &middot; Shift+Enter for a new line</span>
       </div>
       <div class="row">
-        <textarea id="input" rows="1" placeholder="Ask something.  Enter sends, Shift+Enter for a new line."></textarea>
+        <textarea id="input" rows="1" placeholder="Ask something."></textarea>
         <button class="act" id="send">send</button>
       </div>
     </div>
@@ -519,6 +671,26 @@ const ms = (n) => n == null ? "—" : n < 1000 ? Math.round(n) + "ms" : (n / 100
 
 function routeClass(route) {
   return ["trivial", "chat", "think"].includes(route) ? route : "chat";
+}
+
+/* The header mark reflects what the router is doing. `busy` while a request is in
+   flight; afterwards the ring for the tier that answered stays lit, so the last
+   decision is still readable once the reply has scrolled away.
+   Also updates the accessible name — the mark carries real state, so it cannot be
+   aria-hidden decoration the way the old reticle was. */
+const reactor = $("#reactor");
+function setReactor({ busy, tier }) {
+  if (busy !== undefined) reactor.classList.toggle("busy", busy);
+  if (tier !== undefined) {
+    if (tier) reactor.dataset.tier = routeClass(tier);
+    else delete reactor.dataset.tier;
+  }
+  const state = reactor.classList.contains("busy")
+    ? "Router working"
+    : reactor.dataset.tier ? `Router idle — last answer from the ${reactor.dataset.tier} tier`
+    : "Router idle";
+  reactor.setAttribute("aria-label", state);
+  $("#reactorTitle").textContent = state;
 }
 
 /* ---------- status bar ---------- */
@@ -744,7 +916,19 @@ function selectMessage(idx, explicit = false) {
 
 /* ---------- rendering messages ---------- */
 
+/* The tier legend is scaffolding for an empty console, not a permanent header — once
+   there is a real transcript it is the transcript that should be teaching. Captured
+   as markup at load so "new thread" can put it back rather than leaving the void the
+   legend was added to fix. */
+const EMPTY_STATE = $("#logEmpty").outerHTML;
+
+function clearEmptyState() {
+  const placeholder = $("#logEmpty");
+  if (placeholder) placeholder.remove();
+}
+
 function addUser(text) {
+  clearEmptyState();
   const el = document.createElement("div");
   el.className = "msg user";
   el.innerHTML = `<div class="who">you</div><div class="body">${esc(text)}</div>`;
@@ -764,17 +948,19 @@ function markUnsent(el) {
 }
 
 function addBot() {
+  clearEmptyState();
   const idx = traces.length;
   traces.push(null);
   const el = document.createElement("div");
   el.className = "msg bot";
   el.dataset.idx = idx;
   el.innerHTML = `<div class="who">assistant</div>
-    <div class="body"><span class="working"><span class="bars"><i></i><i></i><i></i><i></i></span>
+    <div class="body"><span class="working"><span class="scan"></span>
     <span class="elapsed">routing</span></span></div>
     <div class="foot"></div>`;
   log.appendChild(el);
   log.scrollTop = log.scrollHeight;
+  setReactor({ busy: true });
 
   // A live timer, because the reasoning tier routinely takes 30–300 s. Without it a
   // working server is indistinguishable from a hung one, and that is the single most
@@ -795,6 +981,7 @@ function addBot() {
     },
     fail(msg) {
       clearInterval(tick);
+      setReactor({ busy: false });
       const body = el.querySelector(".body");
       body.classList.add("err");
       body.textContent = msg;
@@ -802,6 +989,7 @@ function addBot() {
     finish(meta, elapsed) {
       clearInterval(tick);
       traces[idx] = meta;
+      setReactor({ busy: false, tier: meta ? meta.route : null });
       const foot = el.querySelector(".foot");
       if (!meta) { foot.textContent = ""; return; }
       el.style.setProperty("--tier", `var(--route-${routeClass(meta.route)})`);
@@ -906,11 +1094,16 @@ async function preview() {
   const text = input.value.trim();
   if (!text) { input.focus(); return; }
   $("#trace").innerHTML = '<p class="empty">Resolving…</p>';
+  setReactor({ busy: true });
   try {
     const meta = await (await fetch("/route/debug?prompt=" + encodeURIComponent(text))).json();
     renderTrace(meta, "preview");
+    // Preview resolves a route without spending a generation, so the mark shows the
+    // tier it would have used — which is the entire point of asking.
+    setReactor({ busy: false, tier: meta && meta.route });
     openDrawer(true);
   } catch (err) {
+    setReactor({ busy: false });
     $("#trace").innerHTML = `<p class="empty">Preview failed: ${esc(err.message)}</p>`;
   }
 }
@@ -956,9 +1149,10 @@ const openDrawer = (explicit = false) => {
 };
 $("#reset").onclick = () => {
   messages = []; traces = [];
-  log.innerHTML = "";
+  log.innerHTML = EMPTY_STATE;
   $("#trace").innerHTML = '<p class="empty">New thread. Nothing decided yet.</p>';
   $("#traceWhen").textContent = "";
+  setReactor({ busy: false, tier: null });
   input.focus();
 };
 

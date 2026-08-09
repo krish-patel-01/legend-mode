@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from app import api
 from app.tools import web
 
 
@@ -173,3 +174,28 @@ async def _search_returning(status: int, payload: dict, config=None) -> str:
 def test_web_tools_declare_the_web_family() -> None:
     assert {t.family for t in web.tools()} == {"web"}
     assert {t.name for t in web.tools()} == {"web_search", "fetch_url"}
+
+
+# --- the console's health pill -------------------------------------------------
+
+
+def test_an_empty_query_probe_reads_as_healthy() -> None:
+    """SearXNG answers `q=` with 400 "No query" — after it has cleared the format gate.
+
+    That is what makes the cheap probe possible: reaching the missing-query error proves
+    `json` is an allowed format, without running a federated search to find out. The
+    probe this replaced searched for "ping", took 2.6 s against 11 ms, and reported a
+    healthy backend as unreachable whenever a cold instance overran the timeout.
+    """
+    assert api.web_health(400) == "ok"
+    assert api.web_health(200) == "ok"
+
+
+def test_the_json_format_trap_is_still_caught() -> None:
+    """The one misconfiguration worth a red pill: `json` missing from search.formats."""
+    assert api.web_health(403) == "no json format"
+
+
+def test_an_unexpected_status_is_reported_verbatim() -> None:
+    """Not silently healthy — an unknown code is news, and guessing at it hides it."""
+    assert api.web_health(502) == "http 502"
