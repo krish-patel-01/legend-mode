@@ -21,9 +21,33 @@ class Settings(BaseSettings):
     models_file: Path = ROOT / "models.yaml"
     routes_file: Path = ROOT / "routes.yaml"
 
-    # Ollama keeps at most this many models resident. The pinned tier occupies one
-    # slot permanently, so 2 means "pinned + one swapped model".
-    max_loaded_models: int = 2
+    # Ollama keeps at most this many models resident. One slot per answering tier plus the
+    # embedder: embed + general + instruct + think = 4.
+    #
+    # **This has to be set on the daemon, not here.** Nothing in this process can change a
+    # running Ollama's residency cap; `ollama_env` below exists to be exported by whoever
+    # starts `ollama serve`.
+    #
+    # **The value barely matters, which took three wrong answers to establish.** It was
+    # first 2, on the reasoning "the pinned tier occupies one slot" — an undercount, since
+    # `general` and `embed` are both pinned. Then eviction was blamed for a stall, tested,
+    # and ruled out. Then adding `instruct` as a fourth tier was blamed for an eval median
+    # going 1.8 s -> 11.9 s, and the cap was raised to fix it.
+    #
+    # Measured properly, alternating chat and reasoning requests with the cap at 3 and at
+    # 4, back to back, in both orders:
+    #
+    #   3 then 4:   cap 3  49.9 s   |   cap 4  60.9 s
+    #   4 then 3:   cap 4  52.5 s   |   cap 3  71.6 s
+    #
+    # Whichever ran *second* lost, both times. Free memory was 2.5 GB in every run and
+    # reload time never exceeded 1.7 s total. There is no residency effect here at all:
+    # this laptop loses roughly 30% of its throughput under sustained load, and every
+    # comparison above was measuring the CPU getting hot.
+    #
+    # So 4 is kept because one slot per tier is the tidy default, not because it was
+    # measured to be faster. Lower it freely if RAM is tight.
+    max_loaded_models: int = 4
 
     # Cap on cached routing decisions, keyed by prompt hash.
     decision_cache_size: int = 512
@@ -37,15 +61,110 @@ class Settings(BaseSettings):
     # "router". Currently the 350M `general` tier fills this role.
     router_alias: str = "general"
 
+    # Routes worth staying on when the user sends a short follow-up. Only tiers that
+    # cost something to reach belong here: sticking to a cheap tier is what the cascade
+    # would do anyway, so listing one would just spend a routing pass to change nothing.
+    sticky_routes: list[str] = ["think"]
+
+    # Where a disputed answer goes. Being told "that's wrong" is the strongest signal
+    # available that the previous tier was not good enough, so it escalates rather than
+    # re-asking whichever model just got it wrong.
+    escalate_route: str = "think"
+
     # Start loading the predicted model while classification is still running.
     preload_predicted: bool = True
 
     request_timeout: float = 300.0
 
-    # Left unset until a name is picked. The system prompt (app/persona.py) reads
-    # this and tells the model to say it doesn't have a name yet rather than either
-    # inventing one or claiming to be ChatGPT/Claude/whatever it was trained near.
-    assistant_name: str | None = None
+    # --- effort and adjudication (app/effort.py, app/adjudicate.py) ---------
+    #
+    # "auto" lets app/effort.py estimate per request; "fast"/"standard"/"careful" pin
+    # every request to one level, which is mostly useful for A/B runs of the eval suite.
+    default_effort: str = "auto"
+
+    # Master switch for the cross-model critic, and off by default for a measured reason:
+    # **on this hardware, escalating dominates verifying.**
+    #
+    # A verification pass is the 1.2B reading a question and an answer and reasoning to a
+    # verdict — 26.7 s median at the budget where it actually works (see the table in
+    # app/adjudicate.py). Answering the question on the 1.2B instead costs about the same
+    # ~25 s, and produces a better answer rather than a grade on a worse one. Verifying
+    # therefore buys nothing the cheaper move does not, and in the failure case it costs
+    # double, because a verdict of "incorrect" still has to be followed by a regeneration.
+    #
+    # The machinery stays because the reasoning is hardware-specific, not permanent: a
+    # second model that could judge in 2 s would flip this immediately. Turn it on with
+    # LEGEND_VERIFY_ENABLED=true, or per request with {"effort": "careful"}; the eval
+    # harness reports what fraction of requests paid for it and whether anything changed.
+    #
+    # Off does not mean unchecked. The free deterministic checks — guardrails, and the
+    # capitulation guard in app/adjudicate.py — run regardless. Only the paid one is off.
+    verify_enabled: bool = False
+
+    # Answer twice and compare the two answers numerically, abstaining when they
+    # disagree. Not self-verification — no model judges anything, two numbers are
+    # compared exactly — but it doubles latency on the slowest tier, so it is off until
+    # the eval harness says the accuracy is worth it.
+    self_consistency: bool = False
+
+    # Which model does the judging. Must never be the model that produced the answer,
+    # and must never be the 350M, which scores at chance as a critic (see models.yaml).
+    critic_alias: str = "think"
+
+    # --- retrieval (app/retrieval/) ----------------------------------------
+    retrieval_enabled: bool = True
+
+    # Which *route's* model reads retrieved text, not an alias — so it tracks whatever
+    # `chat` runs on instead of pinning a quantisation-specific name that drifts.
+    #
+    # Escalation exists because the 350M cannot be trusted with a passage: handed a chunk
+    # saying "the verifier is always the 1.2B and never the 350M", it answered "The model
+    # that verifies answers is LFM2.5-350M". It inverted the source.
+    #
+    # It used to escalate to the reasoning tier, which was right when `chat` *was* the
+    # 350M and wrong afterwards. Asked the same memory-backed question:
+    #
+    #   chat tier (1.2B instruct)  "Krish. Legend Mode."                correct, ~2-4 s
+    #   reasoning tier             "Your name is Krish. You work on …"  correct, 11-25 s
+    #   350M                       "My name is Krish. I work on …"      wrong
+    #
+    # Both read it correctly, so the reasoning tier was paying 25 s for nothing — and on a
+    # formatting request ("make my name bold") it burned 51.7 s and returned no content at
+    # all. Reading a passage is not a reasoning task.
+    reader_route: str = "chat"
+    retrieval_db: Path = ROOT / "data" / "corpus.db"
+    retrieval_top_k: int = 3
+
+    # Append a "Sources: …" line to a retrieval-grounded reply. Computed by the server,
+    # never written by the model — see the note in app/retrieval/service.py.
+    retrieval_cite: bool = True
+
+    # Cosine cut-off below which a hit is discarded. bge-small puts unrelated English
+    # around 0.6, so this is well above the naive midpoint on purpose — injecting a
+    # merely-plausible passage is how retrieval makes answers worse rather than better.
+    # Calibrate with: uv run python scripts/ingest.py --probe "your question"
+    retrieval_min_score: float = 0.66
+
+    # Memories need their own, lower cut-off. 0.66 was calibrated against 800-character
+    # document chunks; a memory is one short sentence, and short-to-short similarity runs
+    # lower for the same relevance. Measured against a stored "I work on Legend Mode":
+    #
+    #   "what is my name"       0.767  (its own fact)
+    #   "what am I working on"  0.677
+    #   "where do I work"       0.599  <- the right answer, missed at 0.66
+    #
+    # A false positive here is also far less costly than with documents: the worst case is
+    # showing the model something the user themselves said, not a passage that overrides
+    # correct parametric knowledge.
+    retrieval_memory_min_score: float = 0.55
+
+    # The name is picked, so this is a default rather than an env-only setting: the
+    # named branch of app/persona.py is what carries the personality, and leaving it
+    # unset would quietly ship the anonymous prompt to anyone cloning this.
+    #
+    # Setting it to None restores the unnamed persona, which tells the model to say it
+    # has no name rather than invent one or claim to be a commercial assistant.
+    assistant_name: str | None = "Lucy"
 
     @property
     def ollama_env(self) -> dict[str, str]:

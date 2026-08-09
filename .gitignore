@@ -5,3 +5,7 @@ __pycache__/
 .env
 models/
 .claude/
+
+# Retrieval index. Rebuildable from the source documents with scripts/ingest.py, and
+# it is a binary sqlite file, so committing it would only produce unreviewable diffs.
+data/

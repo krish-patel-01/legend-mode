@@ -3,16 +3,39 @@ from __future__ import annotations
 from app.persona import build_system_prompt, ensure_system_prompt
 
 
+def test_the_brief_tier_is_never_told_the_name():
+    """Measured over 16 probes per wording: naming the 350M makes it reply with the name
+    and nothing else — 16/16 broken with a style clause, 8/16 with the bare name, 16/16
+    with the name as a conditional rule, against 0/16 unnamed. "what is the capital of
+    France" came back as "Lucy". It costs nothing to withhold, because identity questions
+    route to `chat` now, so this tier only sees greetings."""
+    brief = build_system_prompt("Lucy", "brief")
+    assert "Lucy" not in brief
+    assert brief == build_system_prompt(None, "brief")
+
+
+def test_the_full_tier_gets_the_name_and_the_personality():
+    full = build_system_prompt("Lucy", "full")
+    assert "You are Lucy," in full
+    assert "direct and a little dry" in full
+    # The clause that took the name from 3/12 used to 11/12. Stating the name is not
+    # enough; stating when to act on it is.
+    assert "asks who you are, you say your name" in full
+
+
 def test_no_name_set_says_so_honestly():
     assert "no name yet" in build_system_prompt(None)
     assert "no name yet" in build_system_prompt(None, "brief")
 
 
 def test_name_set_is_used_directly():
-    for style in ("full", "brief"):
-        prompt = build_system_prompt("Vex", style)
-        assert "Your name is Vex." in prompt
-        assert "no name yet" not in prompt
+    """`brief` is excluded now, and that is measured rather than a preference: naming the
+    350M makes it answer with the name and nothing else, 16/16 on one wording. It keeps
+    the unnamed prompt — including the "no name yet" clause, which is the honest thing for
+    a tier that has not been told one."""
+    prompt = build_system_prompt("Vex", "full")
+    assert "You are Vex," in prompt
+    assert "no name yet" not in prompt
 
 
 def test_prompt_never_ends_on_the_identity_clause():

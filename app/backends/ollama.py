@@ -65,7 +65,10 @@ class OllamaClient:
         think: bool | None = None,
     ) -> dict[str, Any]:
         payload = self._chat_payload(spec, messages, tools, options, think, stream=False)
-        resp = await self._client.post("/api/chat", json=payload)
+        try:
+            resp = await self._client.post("/api/chat", json=payload)
+        except httpx.HTTPError as exc:
+            raise OllamaError(self._unreachable(exc)) from exc
         if resp.status_code >= 400:
             raise OllamaError(f"{spec.tag}: {resp.status_code} {resp.text}")
         return resp.json()
@@ -80,17 +83,20 @@ class OllamaClient:
         think: bool | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         payload = self._chat_payload(spec, messages, tools, options, think, stream=True)
-        async with self._client.stream("POST", "/api/chat", json=payload) as resp:
-            if resp.status_code >= 400:
-                body = (await resp.aread()).decode(errors="replace")
-                raise OllamaError(f"{spec.tag}: {resp.status_code} {body}")
-            async for line in resp.aiter_lines():
-                if not line.strip():
-                    continue
-                try:
-                    yield json.loads(line)
-                except json.JSONDecodeError:
-                    log.warning("unparseable chunk from %s: %r", spec.tag, line[:200])
+        try:
+            async with self._client.stream("POST", "/api/chat", json=payload) as resp:
+                if resp.status_code >= 400:
+                    body = (await resp.aread()).decode(errors="replace")
+                    raise OllamaError(f"{spec.tag}: {resp.status_code} {body}")
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        log.warning("unparseable chunk from %s: %r", spec.tag, line[:200])
+        except httpx.HTTPError as exc:
+            raise OllamaError(self._unreachable(exc)) from exc
 
     def _chat_payload(
         self,
@@ -123,13 +129,30 @@ class OllamaClient:
         return payload
 
     async def embed(self, spec: ModelSpec, texts: list[str]) -> list[list[float]]:
-        resp = await self._client.post(
-            "/api/embed",
-            json={"model": spec.tag, "input": texts, "keep_alive": spec.keep_alive},
-        )
+        try:
+            resp = await self._client.post(
+                "/api/embed",
+                json={"model": spec.tag, "input": texts, "keep_alive": spec.keep_alive},
+            )
+        except httpx.HTTPError as exc:
+            raise OllamaError(self._unreachable(exc)) from exc
         if resp.status_code >= 400:
             raise OllamaError(f"{spec.tag}: {resp.status_code} {resp.text}")
         return resp.json()["embeddings"]
+
+    def _unreachable(self, exc: httpx.HTTPError) -> str:
+        """A transport failure, phrased as the thing that is almost always wrong.
+
+        This layer's contract is that it raises OllamaError, and callers rely on it: the
+        API turns one into a 502 with the message attached. An httpx exception escaping
+        raw instead produced a bare 500 and a stack trace in the log — which is the least
+        helpful possible answer to "the daemon isn't running", by far the most common
+        operational failure here.
+        """
+        return (
+            f"cannot reach Ollama at {self._settings.ollama_host} ({exc}). "
+            f"Start it with `ollama serve` and retry."
+        )
 
     # --- residency ----------------------------------------------------------
 

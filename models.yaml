@@ -14,15 +14,25 @@
 # always overrides whatever's set here. The shared system prompt (identity, not
 # sampling) lives in app/persona.py, not here.
 #
-# Current layout (accuracy/efficiency test, 230M and 2B tiers both dropped — three
-# answering models only, per Settings.router_alias in app/config.py):
+# Current layout — two answering models, deliberately. Everything else is parked.
 #   general (350M, pinned)  -> trivial replies + stage-3 classifier + everyday chat
 #   embed (pinned)          -> routing only, never answers
-#   small (Qwen3.5-0.8B)    -> lighter reasoning + the only remaining tools/vision tier
-#   think (LFM2.5-1.2B)     -> heavier, explicit step-by-step reasoning
-# The 230M classifier was measurably worse than 350M (misrouted a reasoning question
-# straight into a bad trivial-tier answer) — general now fills that role instead,
-# since Settings.router_alias defaults to "general".
+#   think (LFM2.5-1.2B)     -> reasoning, and the only tier that can verify an answer
+#
+# Why only these two. Measured on this machine over 16 question/answer pairs (8 right,
+# 8 wrong), asking each model to judge correctness:
+#
+#   350M                 50% accurate, rubber-stamped 8/8 wrong answers, 0.6s
+#   Qwen3.5-0.8B (fast)  56% accurate, rubber-stamped 7/8 wrong answers, 1.1s
+#   Qwen3.5-0.8B (think) 100% on the 6/16 it finished, ran out of budget on 10, 28s
+#   LFM2.5-1.2B          100% on the 14/16 it finished, 0 false alarms,        28s
+#
+# So verification is the 1.2B's job and cannot be delegated downward: no smaller model
+# here can tell a right answer from a wrong one. That leaves the second model with only
+# cheap latency-critical work (trivial replies, stage-3 classification), where the 350M
+# wins outright — 71.8 tok/s vs the 0.8B's 39, at 229 MB vs 737 MB. The 230M was tried
+# for that role earlier and was measurably worse than the 350M, so general fills it,
+# per Settings.router_alias in app/config.py.
 
 defaults:
   num_ctx: 8192
@@ -71,31 +81,6 @@ models:
 
   # --- Swapped tier: at most one resident at a time ---
 
-  - alias: small
-    tier: small
-    repo: unsloth/Qwen3.5-0.8B-GGUF
-    file: Qwen3.5-0.8B-Q4_K_M.gguf
-    glob:
-      - "**/Qwen3.5-0.8B-Q4_K_M.gguf"
-    mmproj_glob:
-      - "**/models--unsloth--Qwen3.5-0.8B-GGUF/**/mmproj-F16.gguf"
-    mmproj_file: mmproj-F16.gguf
-    keep_alive: 5m
-    vision: true
-    tools: true
-    # Same Qwen3.5 default-thinking-ON behavior seen across this model line: without
-    # this, a plain "what is 2+2?" burns the whole token budget on a <think> block
-    # and returns empty content.
-    default_think: false
-    # Lower temperature than `general`: this tier also carries tool-calling, where
-    # a stable, literal reading of the request matters more than variety. Higher
-    # repeat_penalty than other tiers since this model line was observed looping
-    # (same duplicated phrase repeatedly) during testing without one.
-    temperature: 0.3
-    top_p: 0.85
-    top_k: 30
-    repeat_penalty: 1.15
-
   - alias: think
     tier: think
     repo: unsloth/LFM2.5-1.2B-Thinking-GGUF
@@ -113,9 +98,85 @@ models:
     top_k: 40
     repeat_penalty: 1.1
 
-  # --- Parked for now: dropped while testing accuracy/efficiency with the smaller
-  # LFM + Qwen3.5-0.8B pairing above. Weights stay on disk; uncomment to bring one
-  # back as `large` and re-point the tools/vision routes in routes.yaml at it.
+  # Candidate replacement for the 350M's *chat* role — not its classifier role, where
+  # 71.8 tok/s is the whole point and quality barely matters.
+  #
+  # The 350M's conversational failures are not prompt-fixable. Replaying one real
+  # transcript it invented a maker outright ("developed by NLP research team at Stanford
+  # University"), answered "what am I?" with "You're asking about myself", and echoed
+  # "Nope" back twice in a row. That is a capability floor, not a wording problem.
+  #
+  # This is the *Instruct* build, deliberately, not the Thinking one with reasoning
+  # turned off — Ollama advertises a `thinking` capability for the Thinking GGUF but
+  # `think: false` does not actually suppress the block, verified against the daemon. A
+  # model trained to reason first is not the same thing as one trained to answer first.
+  #
+  # Not wired into routes.yaml yet, so nothing routes here until the comparison says it
+  # should. Reachable meanwhile with an explicit {"model": "instruct"}.
+  - alias: instruct
+    tier: instruct
+    repo: unsloth/LFM2.5-1.2B-Instruct-GGUF
+    file: LFM2.5-1.2B-Instruct-Q4_K_M.gguf
+    glob:
+      - "**/LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+    keep_alive: 5m
+    default_max_tokens: 512
+    temperature: 0.6
+    top_p: 0.9
+    top_k: 40
+    repeat_penalty: 1.1
+
+  # Temporary, for a quantisation comparison — remove once it is settled. Unsloth's
+  # *dynamic* 3-bit rather than a plain Q3_K_M: UD quants keep more precision in the
+  # layers that matter, which is the only version of 3-bit worth considering on a tier
+  # that was adopted for answer quality in the first place.
+  #
+  # 600 MB against Q4_K_M's 731 MB. The hoped-for win is throughput, since CPU decode is
+  # memory-bandwidth bound — but the measured bottleneck on this machine is sustained-load
+  # throttling, not bandwidth, so the honest prior is that it buys little. Being tested
+  # interleaved with Q4 for exactly that reason.
+  - alias: instruct-q3
+    tier: instruct
+    repo: unsloth/LFM2.5-1.2B-Instruct-GGUF
+    file: LFM2.5-1.2B-Instruct-UD-Q3_K_XL.gguf
+    glob:
+      - "**/LFM2.5-1.2B-Instruct-UD-Q3_K_XL.gguf"
+    keep_alive: 5m
+    default_max_tokens: 512
+    temperature: 0.6
+    top_p: 0.9
+    top_k: 40
+    repeat_penalty: 1.1
+
+  # --- Parked. Weights stay on disk (and `legend/small` is still tagged in Ollama),
+  # so uncommenting an entry and re-running scripts/import_models.py brings it back.
+  # Anything restored here also needs its route re-added to routes.yaml, which no
+  # longer defines `tools` or `vision`.
+  #
+  # Qwen3.5-0.8B: the previous tools/vision tier. Dropped because image support isn't
+  # wanted right now and it lost the second-model comparison at the top of this file.
+  # It is also the tier that insists it is Qwen no matter the system prompt, which is
+  # why app/router/rules.py still pins identity questions away from it.
+  #
+  # - alias: small
+  #   tier: small
+  #   repo: unsloth/Qwen3.5-0.8B-GGUF
+  #   file: Qwen3.5-0.8B-Q4_K_M.gguf
+  #   glob:
+  #     - "**/Qwen3.5-0.8B-Q4_K_M.gguf"
+  #   mmproj_glob:
+  #     - "**/models--unsloth--Qwen3.5-0.8B-GGUF/**/mmproj-F16.gguf"
+  #   mmproj_file: mmproj-F16.gguf
+  #   keep_alive: 5m
+  #   vision: true
+  #   tools: true
+  #   # Every Qwen3.5 GGUF here defaults to thinking ON and will burn the whole token
+  #   # budget on a <think> block, returning empty content, unless this is set.
+  #   default_think: false
+  #   temperature: 0.3
+  #   top_p: 0.85
+  #   top_k: 30
+  #   repeat_penalty: 1.15
   #
   # - alias: large
   #   tier: large

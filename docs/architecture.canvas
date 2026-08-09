@@ -1,0 +1,436 @@
+{
+  "nodes": [
+    {
+      "id": "18ea3e0692b5df78",
+      "type": "group",
+      "x": -80,
+      "y": -80,
+      "width": 1180,
+      "height": 540,
+      "label": "1 — Routing (app/router/): cheapest stage first, first confident answer wins",
+      "color": "5"
+    },
+    {
+      "id": "7e40946cf81b35de",
+      "type": "group",
+      "x": -80,
+      "y": 540,
+      "width": 1180,
+      "height": 580,
+      "label": "2 — Before generation: decide the budget, compute what can be computed",
+      "color": "4"
+    },
+    {
+      "id": "e5b70bd36f82ac55",
+      "type": "group",
+      "x": -80,
+      "y": 1340,
+      "width": 1180,
+      "height": 580,
+      "label": "3 — After generation: check, correct, or abstain",
+      "color": "2"
+    },
+    {
+      "id": "07d92df581a4ce77",
+      "type": "group",
+      "x": 1200,
+      "y": -80,
+      "width": 460,
+      "height": 1160,
+      "label": "Measured on this machine — the constraints that shaped all of it",
+      "color": "1"
+    },
+    {
+      "id": "a1f3c7d92b4e6801",
+      "type": "text",
+      "x": 360,
+      "y": -260,
+      "width": 380,
+      "height": 120,
+      "color": "6",
+      "text": "## POST /v1/chat/completions\n`app/api.py`\n\nAn image gets a **422** — no tier is vision-capable. `model` is a routing *policy* (`auto`), not a model name."
+    },
+    {
+      "id": "b2e4d8a03c5f7912",
+      "type": "text",
+      "x": -20,
+      "y": 0,
+      "width": 280,
+      "height": 200,
+      "text": "### Stage 1 — rules\n`rules.py`\n\nRegex, ~0 ms. Reasoning cues, code fences, word problems, sequence / transformation / multiple-choice puzzles → `think`.\n\nGreetings and **identity questions** → `trivial`."
+    },
+    {
+      "id": "c3f5e9b14d608a23",
+      "type": "text",
+      "x": 290,
+      "y": 0,
+      "width": 280,
+      "height": 200,
+      "text": "### Sticky\n`engine._sticky`\n\nShort follow-ups keep the thread's tier.\n\n- **dispute** → escalate\n- **correction** → escalate\n- weak dispute / continuation → stay\n\nRuns after rules, so \"who are you?\" mid-thread is still identity."
+    },
+    {
+      "id": "d4a6fac25e719b34",
+      "type": "text",
+      "x": 600,
+      "y": 0,
+      "width": 240,
+      "height": 200,
+      "text": "### Stage 2 — embeddings\n`embed.py`\n\nbge-small vs per-route centroids built from `routes.yaml`.\n\nAccepted on score **and** margin."
+    },
+    {
+      "id": "e5b70bd36f82ac45",
+      "type": "text",
+      "x": 870,
+      "y": 0,
+      "width": 210,
+      "height": 200,
+      "color": "1",
+      "text": "### Stage 3 — classifier\n`classifier.py`\n\nThe 350M names a label.\n\n**This one guesses.** It filed a real question as `trivial`; the 350M then answered *\"The question itself is the answer.\"*"
+    },
+    {
+      "id": "f6c81ce47093bd56",
+      "type": "text",
+      "x": -20,
+      "y": 240,
+      "width": 540,
+      "height": 190,
+      "text": "**`anchor_text` — how the thread's tier is recovered.**\n\nNot by storing state: by re-routing the last user turn that is *not itself a follow-up*. Routing stays a pure function of the messages, so the API is stateless and two clients sharing a thread cannot corrupt each other.\n\nThe walk-back matters. In a run of \"its incorrect\" / \"nope\" / \"nope\", re-routing merely the previous turn finds another \"nope\" — which lands on the trivial tier alone, the exact demotion the stage exists to prevent."
+    },
+    {
+      "id": "07d92df581a4ce67",
+      "type": "text",
+      "x": 550,
+      "y": 240,
+      "width": 530,
+      "height": 190,
+      "text": "**Decision cache — and why `origin` exists.**\n\nKeyed by prompt hash. Caches the *routing decision*, never the answer.\n\nA cache hit reports `stage: \"cache\"`, which loses how the decision was made. The effort controller needs that: a cached guess from stage 3 is still a guess. `RouteDecision.origin` carries the deciding stage through.\n\nRules and sticky decisions are never cached."
+    },
+    {
+      "id": "29fb4f17a3c6e089",
+      "type": "text",
+      "x": -20,
+      "y": 620,
+      "width": 340,
+      "height": 240,
+      "text": "### Guardrails\n`app/guardrails.py`\n\nArithmetic (restricted `ast`, never `eval`), percentages, discounts, leap years, timezones, unit conversions.\n\n**Grounding, not correction** — the computed fact is appended to the *system prompt* before generation, so the model phrases it rather than having its prose patched.\n\nGuards decline when unsure. A guard that fires on a misread question is worse than no guard."
+    },
+    {
+      "id": "3a0c5028b4d7f19a",
+      "type": "text",
+      "x": 350,
+      "y": 620,
+      "width": 340,
+      "height": 240,
+      "color": "6",
+      "text": "### Effort plan\n`app/effort.py`\n\n| level | budget |\n|---|---|\n| `fast` | 256 |\n| `standard` | tier ceiling |\n| `careful` | per follow-up kind |\n\nFollow-ups: **384** bare denial · **768** stated dispute · **1024** correction.\n\nUncertainty reads off the *stage*, not `confidence` — those aren't on a common scale."
+    },
+    {
+      "id": "4b1d6139c5e802ab",
+      "type": "text",
+      "x": 720,
+      "y": 620,
+      "width": 360,
+      "height": 240,
+      "text": "### Retrieval\n`app/retrieval/`\n\nsqlite + numpy over the already-pinned bge embedder. No vector DB — brute-force cosine over a few thousand chunks is invisible next to 25 s of generation.\n\n**Two gates.** A syntactic one (is this even a lookup?) and a similarity threshold at **0.66**.\n\nOn-topic scores 0.70–0.76 here; off-topic 0.50–0.51."
+    },
+    {
+      "id": "5c2e724ad6f913bc",
+      "type": "text",
+      "x": -20,
+      "y": 890,
+      "width": 540,
+      "height": 200,
+      "text": "**Prompt assembly** — `app/persona.py`\n\nPersona (two lengths, per tier) → grounding note → retrieved passages → follow-up note.\n\n`DISPUTE_NOTE` says *don't simply cave*. `CORRECTION_NOTE` says *take this as true and re-work from the start*. Deliberately not the same text: a dispute carries no information, a correction hands over a fact.\n\n**Never end a prompt on a quotable sentence.** Twice observed: a 350M replying \"you don't have one yet.\" to *hi*, and a 1.2B replying \"Three sentences: Four boxes.\""
+    },
+    {
+      "id": "6d3f835be70a24cd",
+      "type": "text",
+      "x": 550,
+      "y": 890,
+      "width": 530,
+      "height": 200,
+      "color": "1",
+      "text": "**A retrieval hit escalates to the reading tier.**\n\nThe premise — a grounded small model beats an ungrounded large one — assumes the small model can *read*.\n\nHanded the chunk saying *\"the verifier is always the 1.2B and never the 350M\"*, the 350M answered *\"The model that verifies answers is LFM2.5-350M.\"* It inverted the source sitting in front of it.\n\nReading a passage is a different skill from recall, and it's the one the 1.2B has."
+    },
+    {
+      "id": "8f51a57d092c46ef",
+      "type": "text",
+      "x": 360,
+      "y": 1180,
+      "width": 380,
+      "height": 110,
+      "color": "6",
+      "text": "## Generation\nOllama `/api/chat` · `num_predict` from the effort plan, not the tier default. A caller's `max_tokens` still overrides both."
+    },
+    {
+      "id": "9062b68e1a3d5700",
+      "type": "text",
+      "x": -20,
+      "y": 1420,
+      "width": 340,
+      "height": 220,
+      "text": "### Empty-content fallback\n\nA thinking model can spend its whole budget reasoning and emit nothing.\n\nThe wording matters and an earlier one was wrong: *\"I ran out of thinking room\"* implies a bigger budget helps. Measured, it doesn't — at 4096 tokens two puzzles produced **slower wrong answers** than no answer at 1536.\n\nSo it says the question is past this tier, and doesn't invite a retry that fails the same way."
+    },
+    {
+      "id": "a173c79f2b4e6811",
+      "type": "text",
+      "x": 350,
+      "y": 1420,
+      "width": 340,
+      "height": 220,
+      "text": "### Grounding correction\n\nInjection alone isn't enough. At 6 samples the 350M **overrode the supplied value on 5 of 6** discount questions and 5 of 6 temperature conversions — a 2-sample check had said it was fine.\n\nSo a contradicted **numeric** grounding is replaced with the guard's own sentence.\n\nSound precisely because the comparison is numeric and exact — never prose judging prose."
+    },
+    {
+      "id": "b284d8a03c5f7922",
+      "type": "text",
+      "x": 720,
+      "y": 1420,
+      "width": 360,
+      "height": 220,
+      "text": "### Adjudication\n`app/adjudicate.py`\n\n**Capitulation guard** — free, on. A number that changed under contentless pressure earns one re-work; a third distinct answer abstains naming both.\n\n**Cross-model critic** — off by default (see right).\n\n**Self-consistency** — off; doubles the slowest tier.\n\nAt most **one** repair, ever. Unbounded critique oscillates."
+    },
+    {
+      "id": "c395e9b14d608a33",
+      "type": "text",
+      "x": -20,
+      "y": 1670,
+      "width": 640,
+      "height": 220,
+      "color": "1",
+      "text": "**The two critic rules have an empty intersection.**\n\nThe roadmap says the verifier is *always the 1.2B* and *never the model that produced the answer*. Each is defensible. Together, with two models, they permit exactly one case — the 1.2B judging a smaller model — and forbid verifying anything the reasoning tier writes.\n\nSo a `think`-tier answer has **no independent critic on this hardware**. The metadata reports that gap (`adjudicated.skipped`) rather than quietly substituting self-verification, which the measurements already call worthless."
+    },
+    {
+      "id": "d4a6fac25e719b44",
+      "type": "text",
+      "x": 650,
+      "y": 1670,
+      "width": 430,
+      "height": 220,
+      "text": "### Citations are computed, not requested\n\nThe first version labelled each passage `[source#heading]` and asked the model to copy it.\n\nThe 1.2B replied with **only the bracketed citation and no answer** — it matched the most recent pattern in the prompt instead of using the text beneath it.\n\nThe sources are known exactly at that point, so `api.py` appends the `Sources:` line itself. Same rule as the guardrails: compute what can be computed."
+    },
+    {
+      "id": "f6c81ce47093bd66",
+      "type": "text",
+      "x": 360,
+      "y": 1960,
+      "width": 380,
+      "height": 130,
+      "color": "6",
+      "text": "## Response\n`x_legend_route` carries route, stage, reason, `grounded`, `followup`, `effort`, `adjudicated`, `retrieved` — everything needed to explain the answer after the fact."
+    },
+    {
+      "id": "18ea3e0692b5df88",
+      "type": "text",
+      "x": 1240,
+      "y": 20,
+      "width": 380,
+      "height": 300,
+      "text": "### Only the 1.2B can judge anything\n\n16 Q/A pairs, 8 right and 8 wrong:\n\n| critic | acc | waved through | cost |\n|---|---|---|---|\n| 350M | 50% | **8/8** | 0.6 s |\n| Qwen 0.8B fast | 56% | 7/8 | 1.1 s |\n| Qwen 0.8B think | 100% | 0/8 | 28.3 s |\n| **LFM 1.2B** | **100%** | **0/8** | 28.1 s |\n\nThe 350M said CORRECT to all sixteen under two prompts. That is not poor accuracy — it is **no discriminative power at all**, so checking cannot be delegated downward."
+    },
+    {
+      "id": "29fb4f17a3c6e099",
+      "type": "text",
+      "x": 1240,
+      "y": 350,
+      "width": 380,
+      "height": 340,
+      "text": "### …and verifying loses to just escalating\n\nRe-measured over 8 pairs:\n\n| critic config | acc | verdict emitted | median |\n|---|---|---|---|\n| think off, 64 tok | 38% | 7/8 | 7.4 s |\n| think off, 192 tok | 50% | 8/8 | 21.4 s |\n| think on, 512 tok | 25% | **2/8** | 45.1 s |\n| think on, 1024 tok | 75% | 6/8 | 24.9 s |\n| think on, 2048 tok | **88%** | 8/8 | 26.7 s |\n\nThinking off waves through **4/4** wrong answers at any budget — it buys the 350M's behaviour, not a cheap critic.\n\nAt 512 tokens it returns \"unsure\" on 6 of 8 and charges 45 s. From outside that is indistinguishable from a working verifier that never fires.\n\nAt 2048 it works — but **answering on the 1.2B costs the same ~25 s and yields an answer rather than a grade**, and a verdict of \"incorrect\" still needs a regeneration after it. Escalation dominates."
+    },
+    {
+      "id": "3a0c5028b4d7f1aa",
+      "type": "text",
+      "x": 1240,
+      "y": 720,
+      "width": 380,
+      "height": 330,
+      "text": "### Capability ceilings, recorded not chased\n\n**Capitulation.** Box problem, answered correctly, then \"its incorrect\" ×8: **5 held, 1 caved, 2 vague.** Against caving every time before sticky routing — better, not solved.\n\n**Puzzles.** A hidden-number word sequence and a QWERTY letter shift both route to `think` correctly and `think` cannot solve either. More budget bought a slower wrong answer.\n\n**The monkeys riddle.** Answer 10; the 1.2B says 26 and keeps saying 26 after being told the monkeys are on the bed.\n\nAll three sit in `evals/` as `known_failing` — skipped by default, runnable with `--include-known-failing` if something ever moves."
+    }
+  ],
+  "edges": [
+    {
+      "id": "1a2b3c4d5e6f7081",
+      "fromNode": "a1f3c7d92b4e6801",
+      "fromSide": "bottom",
+      "toNode": "b2e4d8a03c5f7912",
+      "toSide": "top",
+      "toEnd": "arrow"
+    },
+    {
+      "id": "2b3c4d5e6f708192",
+      "fromNode": "b2e4d8a03c5f7912",
+      "fromSide": "right",
+      "toNode": "c3f5e9b14d608a23",
+      "toSide": "left",
+      "toEnd": "arrow",
+      "label": "no rule fired"
+    },
+    {
+      "id": "3c4d5e6f708192a3",
+      "fromNode": "c3f5e9b14d608a23",
+      "fromSide": "right",
+      "toNode": "d4a6fac25e719b34",
+      "toSide": "left",
+      "toEnd": "arrow",
+      "label": "not a follow-up"
+    },
+    {
+      "id": "4d5e6f708192a3b4",
+      "fromNode": "d4a6fac25e719b34",
+      "fromSide": "right",
+      "toNode": "e5b70bd36f82ac45",
+      "toSide": "left",
+      "toEnd": "arrow",
+      "label": "margin too thin"
+    },
+    {
+      "id": "5e6f708192a3b4c5",
+      "fromNode": "c3f5e9b14d608a23",
+      "fromSide": "bottom",
+      "toNode": "f6c81ce47093bd56",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "label": "uses"
+    },
+    {
+      "id": "6f708192a3b4c5d6",
+      "fromNode": "d4a6fac25e719b34",
+      "fromSide": "bottom",
+      "toNode": "07d92df581a4ce67",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "label": "cached"
+    },
+    {
+      "id": "708192a3b4c5d6e7",
+      "fromNode": "b2e4d8a03c5f7912",
+      "fromSide": "bottom",
+      "toNode": "29fb4f17a3c6e089",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "label": "routed"
+    },
+    {
+      "id": "8192a3b4c5d6e7f8",
+      "fromNode": "29fb4f17a3c6e089",
+      "fromSide": "right",
+      "toNode": "3a0c5028b4d7f19a",
+      "toSide": "left",
+      "toEnd": "arrow",
+      "label": "grounded? → fast"
+    },
+    {
+      "id": "92a3b4c5d6e7f809",
+      "fromNode": "3a0c5028b4d7f19a",
+      "fromSide": "right",
+      "toNode": "4b1d6139c5e802ab",
+      "toSide": "left",
+      "toEnd": "arrow",
+      "label": "plan.retrieve"
+    },
+    {
+      "id": "a3b4c5d6e7f8091a",
+      "fromNode": "4b1d6139c5e802ab",
+      "fromSide": "bottom",
+      "toNode": "6d3f835be70a24cd",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "label": "hit"
+    },
+    {
+      "id": "b4c5d6e7f8091a2b",
+      "fromNode": "29fb4f17a3c6e089",
+      "fromSide": "bottom",
+      "toNode": "5c2e724ad6f913bc",
+      "toSide": "top",
+      "toEnd": "arrow"
+    },
+    {
+      "id": "c5d6e7f8091a2b3c",
+      "fromNode": "5c2e724ad6f913bc",
+      "fromSide": "bottom",
+      "toNode": "8f51a57d092c46ef",
+      "toSide": "top",
+      "toEnd": "arrow"
+    },
+    {
+      "id": "d6e7f8091a2b3c4d",
+      "fromNode": "6d3f835be70a24cd",
+      "fromSide": "bottom",
+      "toNode": "8f51a57d092c46ef",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "label": "on the think tier"
+    },
+    {
+      "id": "e7f8091a2b3c4d5e",
+      "fromNode": "8f51a57d092c46ef",
+      "fromSide": "bottom",
+      "toNode": "9062b68e1a3d5700",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "label": "empty?"
+    },
+    {
+      "id": "f8091a2b3c4d5e6f",
+      "fromNode": "8f51a57d092c46ef",
+      "fromSide": "bottom",
+      "toNode": "a173c79f2b4e6811",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "label": "contradicted?"
+    },
+    {
+      "id": "091a2b3c4d5e6f70",
+      "fromNode": "8f51a57d092c46ef",
+      "fromSide": "bottom",
+      "toNode": "b284d8a03c5f7922",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "label": "plan.verify"
+    },
+    {
+      "id": "1a2b3c4d5e6f7182",
+      "fromNode": "b284d8a03c5f7922",
+      "fromSide": "bottom",
+      "toNode": "c395e9b14d608a33",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "label": "why it's off"
+    },
+    {
+      "id": "2b3c4d5e6f718293",
+      "fromNode": "b284d8a03c5f7922",
+      "fromSide": "bottom",
+      "toNode": "d4a6fac25e719b44",
+      "toSide": "top",
+      "toEnd": "arrow"
+    },
+    {
+      "id": "3c4d5e6f718293a4",
+      "fromNode": "a173c79f2b4e6811",
+      "fromSide": "bottom",
+      "toNode": "f6c81ce47093bd66",
+      "toSide": "top",
+      "toEnd": "arrow"
+    },
+    {
+      "id": "4d5e6f718293a4b5",
+      "fromNode": "e5b70bd36f82ac45",
+      "fromSide": "right",
+      "toNode": "18ea3e0692b5df88",
+      "toSide": "left",
+      "toEnd": "arrow",
+      "color": "1",
+      "label": "why it's only a guess"
+    },
+    {
+      "id": "5e6f718293a4b5c6",
+      "fromNode": "c395e9b14d608a33",
+      "fromSide": "right",
+      "toNode": "29fb4f17a3c6e099",
+      "toSide": "bottom",
+      "toEnd": "arrow",
+      "color": "1"
+    }
+  ]
+}

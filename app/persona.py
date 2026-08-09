@@ -52,6 +52,53 @@ _FULL_UNNAMED = (
 )
 _FULL_NAMED = "If the user tells you their name, remember it and use it."
 
+# **The 350M is never told the assistant's name. This is measured, and it is emphatic.**
+#
+# Naming it makes it answer with the name and nothing else. Four brief prompts, interleaved
+# over 16 probes each ("Hey", "hi", "thanks!", "what is the capital of France"), counting
+# replies that were just the name or an echo of the prompt:
+#
+#   name + a style clause        16/16 broken   "Hey" -> "Lucy"
+#   name alone                    8/16 broken   "what is the capital of France" -> "Lucy"
+#   name as a conditional rule   16/16 broken   "thanks!" -> "Lucy"
+#   unnamed (control)             0/16
+#
+# This is the failure in note 1 above, at full strength: a proper noun in a prompt this
+# short is simply a more attractive completion than the answer. Three wordings were tried;
+# the problem is the name's presence, not its phrasing.
+#
+# It costs nothing, because the tier no longer needs it. Identity questions used to route
+# here and now route to `chat` (see app/router/rules.py, where that rule reversed), so the
+# 350M only handles greetings and acknowledgements — turns where the name would never come
+# up. `full` still gets the name and the personality.
+# The named prompt is a measured wording, not a written one. Having a name in the prompt
+# turns out not to mean the model will *use* it: asked "who are you?", "what should I call
+# you?" and "hey, what's your name?", four clauses scored, interleaved —
+#
+#   clause                                          says it when asked   volunteers it
+#   "Your name is Lucy."                                    3/12              0/6
+#   "You are Lucy, a helpful …"                             5/12              0/6
+#   "You are Lucy … When someone asks who you are,         11/12              0/6
+#    you say your name."
+#   "… You have a name and you use it; you never           10/12              0/6
+#    say you lack an identity."
+#
+# Scored two-sided on purpose. Saying the name is the goal, but volunteering it unasked is
+# what destroyed the 350M, so a clause that wins the first column and loses the second is
+# not a win. All four were clean there; the third is simply better at the job.
+#
+# At "Your name is Lucy." — the obvious phrasing — three replies in four were "I'm an AI
+# assistant, I don't have a personal identity". Stating a fact does not make a model this
+# size act on it; stating when to act on it does.
+_FULL_NAMED_OPENER = (
+    "You are {name}, a helpful and direct AI assistant running locally. When someone asks "
+    "who you are, you say your name."
+)
+_FULL_NAMED_STYLE = (
+    "Your manner is direct and a little dry: warm without being eager, confident without "
+    "overclaiming. You say when you don't know something instead of guessing."
+)
+
 # {identity} sits mid-prompt on purpose — see note 1 above.
 _BRIEF = "You are a helpful local AI assistant. {identity} Answer the user's question directly and concisely."
 _FULL = (
@@ -61,14 +108,59 @@ _FULL = (
 )
 
 
+# Appended when the sticky stage sees the user disputing the previous answer.
+#
+# Two failures to fix at once. The first is sycophancy: told "its incorrect", the 350M
+# replied "You're right! The number of boxes is indeed 2, not 3" — agreeing without
+# rechecking anything. The second is budget exhaustion: routing disputes to the 1.2B
+# means a bare "nope" arrives with no concrete claim attached, and the model reasons in
+# circles until the token cap and returns nothing at all.
+#
+# So the note does three jobs — refuse the reflex to capitulate, bound the reply, and
+# give the model something cheap to do when the dispute carries no information at all.
+# That last clause matters: a bare "nope" offers nothing to re-check, and without an
+# alternative the model reasons in circles until the budget runs out.
+#
+# The length instruction sits mid-note, not at the end. Ending on "Answer in no more
+# than three sentences." made the 1.2B reply "The total is four. Three sentences: Four
+# boxes." — the same trailing-instruction echo this module's docstring warns about. The
+# note now ends on an action, and if the model does echo that one it asks the user which
+# part they disagree with, which is the wanted behaviour anyway.
+DISPUTE_NOTE = (
+    "The user is disputing your previous answer. Keep this reply to two or three "
+    "sentences. Do not simply agree that you were wrong: re-check the specific claim, "
+    "and if your answer was right, say so plainly and give the one reason why. If they "
+    "have not said what is wrong, ask them which part they disagree with."
+)
+
+# The mirror image, and deliberately not the same text. A dispute says "that's wrong" and
+# carries no information, so the right instruction is to hold firm unless the recheck
+# shows otherwise. A correction says "but the monkeys are on the bed" — it hands over a
+# fact the answer missed, and there the stubbornness DISPUTE_NOTE encourages is exactly
+# wrong. Observed: the previous answer was repeated verbatim after the user supplied the
+# missing constraint, because nothing marked the turn as a correction at all.
+CORRECTION_NOTE = (
+    "The user is pointing out something your previous answer missed or got wrong. Treat "
+    "what they just said as true. Re-work the answer from the start with it included, "
+    "in two or three sentences, and say plainly if it changes your conclusion."
+)
+
+
 def build_system_prompt(assistant_name: str | None, style: str = "full") -> str:
     brief = style == "brief"
-    if assistant_name:
-        identity = f"Your name is {assistant_name}."
-        if not brief:
-            identity = f"{identity} {_FULL_NAMED}"
-    else:
-        identity = _BRIEF_UNNAMED if brief else _FULL_UNNAMED
+    # The `brief` tier is never told the name, whatever `assistant_name` says. See the
+    # note above _BRIEF_NAMED_STYLE: putting it in this prompt at all makes the 350M
+    # answer "Lucy" to everything, including "what is the capital of France".
+    if assistant_name and not brief:
+        # The named prompt replaces the opener rather than filling {identity}, because the
+        # wording that measured best puts the name in the first clause. Ends on the same
+        # directive as the unnamed one — see note 1.
+        return (
+            f"{_FULL_NAMED_OPENER.format(name=assistant_name)} {_FULL_NAMED_STYLE} "
+            f"{_FULL_NAMED} Don't bring up how you work internally unless the user asks. "
+            f"Answer directly and concisely unless real depth is asked for."
+        )
+    identity = _BRIEF_UNNAMED if brief else _FULL_UNNAMED
     return (_BRIEF if brief else _FULL).format(identity=identity)
 
 

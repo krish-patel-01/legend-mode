@@ -34,7 +34,37 @@ routes:
       - "convert 10 km to miles"
 
   chat:
-    model: general
+    # LFM2.5-1.2B-Instruct, not the 350M. Measured by replaying a real transcript as a
+    # conversation, each model's own reply fed back:
+    #
+    #                  claims a maker   calls the user an AI   echoes   8 turns
+    #   350M                        2                      0        1        3 s
+    #   1.2B Instruct               0                      0        0       15 s
+    #
+    # The counts understate the gap. Asked "Okkay then what am I?" the 350M replied
+    # "Ockkay" — twice — which no check catches because it is not a leak or an echo, just
+    # a failure to read the turn at all. The instruct build answered "You're a user
+    # interacting with me", which is simply correct.
+    #
+    # ~5x slower per turn (0.4 s -> 1.9 s) and worth it here: `chat` is where a question
+    # has to be understood rather than pattern-matched. `trivial` stays on the 350M
+    # because greetings and identity are caught by regex in app/router/rules.py before any
+    # model sees them, and the stage-3 classifier stays there too, where 71.8 tok/s is the
+    # entire point and answer quality is irrelevant.
+    # Unsloth's *dynamic* 3-bit, not the Q4_K_M. Interleaved per prompt, since this
+    # machine loses ~30% throughput under sustained load and A-then-B measures order:
+    #
+    #                median tok/s   maker claims   echoes   size
+    #   Q4_K_M               41.0              0        0   731 MB
+    #   UD-Q3_K_XL           46.0              0        0   600 MB
+    #
+    # +12% throughput and 131 MB less resident, with the failure modes the instruct tier
+    # was adopted to fix still at zero across a six-turn replay of a real transcript. The
+    # agreed condition was that any return of maker claims or echoes keeps Q4 whatever the
+    # speed; they did not return. Plain Q3_K_M was not considered — a dynamic quant keeps
+    # precision where it matters, which is the only kind worth putting on a tier chosen
+    # for answer quality.
+    model: instruct-q3
     description: ordinary conversation, short explanations, drafting, rewriting
     examples:
       - "explain what a REST API is"
@@ -77,38 +107,29 @@ routes:
       - "I bought 3 apples and ate 1, what am I left with"
       - "a box holds 4 smaller boxes, and I have two of those — count them all"
       - "if a shirt is 40 dollars with 25% off, what do I pay in the end"
+      # Puzzles. Both of these shapes reached the 350M via `fallback` in real use: no
+      # reasoning keyword, no quantities, and nothing close in the bank until now.
+      - "which word comes next: Stone, Often, Canine, _"
+      - "what letter comes next in this series"
+      - "if HEART goes to JRSTY on a QWERTY keyboard, what does AFTER go to"
+      - "using the same substitution, what does this word become"
+      - "find the odd one out and say why"
+      - "which of these options is correct and why"
+      - "solve this riddle"
 
-  tools:
-    model: small
-    description: requests that need external actions, live data, or function calls
-    examples:
-      - "search the web for the latest news on this"
-      - "what's the weather in Mumbai right now"
-      - "look up the current price of bitcoin"
-      - "read the file config.json and tell me what's in it"
-      - "run this query against the database"
-      - "send an email to the team about the outage"
-      - "check my calendar for tomorrow"
-      - "fetch the contents of that URL"
-      - "list the files in this directory"
-      - "create a ticket for this bug"
-      - "what's on the front page of Hacker News today"
-      - "call the API and show me the response"
-      - "book a meeting for 3pm Friday"
-      - "get the latest stock quote for NVDA"
-      - "look this up online and summarize"
-
-  vision:
-    model: small
-    description: anything referring to an attached image
-    examples:
-      - "what's in this image"
-      - "describe this picture"
-      - "read the text in this screenshot"
-      - "what does this chart show"
-      - "is there a cat in this photo"
-      - "transcribe this handwriting"
-      - "what's wrong with this UI screenshot"
-      - "identify the objects in this image"
-      - "what colour is the car in the photo"
-      - "extract the table from this scan"
+  # `tools` and `vision` used to live here, both served by the Qwen3.5-0.8B `small`
+  # tier. Both are gone with that tier (see models.yaml): image support isn't wanted
+  # right now, and nothing left advertises tools: true.
+  #
+  # Consequences worth knowing:
+  #   - Requests carrying an image are now rejected with a 422 by app/api.py rather
+  #     than being answered blind by a text-only model.
+  #   - A `tools` array is still accepted and forwarded, but no tier will emit
+  #     tool_calls, so callers get an ordinary text reply.
+  #   - Prompts that ask for live data ("what's the weather right now") no longer have
+  #     a route of their own and fall through to chat/think, which will answer from
+  #     stale parametric knowledge. Server-side deterministic checks, not a tools
+  #     tier, are the intended fix for the factual cases.
+  #
+  # To restore: un-park `small` in models.yaml, re-add the route blocks here, and put
+  # back the two structural rules in app/router/rules.py.
