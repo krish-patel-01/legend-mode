@@ -277,13 +277,40 @@ class RouterEngine:
 
         if not self._settings.disable_classifier:
             if decision := await self.classifier.classify(req.text):
-                return decision
+                return self._guard_cheap_guess(decision)
 
         return RouteDecision(
             route=self._settings.default_route,
             stage="fallback",
             reason="no stage was confident; using default route",
             confidence=0.3,
+        )
+
+    def _guard_cheap_guess(self, decision: RouteDecision) -> RouteDecision:
+        """Don't let stage 3 route a request it didn't recognise to the cheapest tier.
+
+        Reaching the classifier means rules found nothing and the embedding margin was
+        too thin. Everything `trivial` is actually for — greetings, acknowledgements,
+        identity questions — is caught by regex in app/router/rules.py before any model
+        runs, so a classifier verdict of `trivial` is not a cheap request being spotted;
+        it is the 350M guessing about a request that already looked unfamiliar.
+
+        The case that prompted this: "please check in the web then answer that question"
+        was labelled `trivial` here, and the 350M read "check in" as hotel check-in and
+        invented a stay in Mexico City. `confidence` cannot express this — the classifier
+        reports a flat 0.6 for every verdict it returns — so the escalation keys on the
+        stage and the route, which are the two facts that actually carry the doubt.
+        """
+        if not self._settings.escalate_classifier_trivial:
+            return decision
+        if decision.route != "trivial" or decision.route == self._settings.default_route:
+            return decision
+        log.info("classifier guessed 'trivial' for an unrecognised request; escalating")
+        return decision.model_copy(
+            update={
+                "route": self._settings.default_route,
+                "reason": f"{decision.reason}; escalated (stage 3 is a guess, not a match)",
+            }
         )
 
     def _finalize(self, decision: RouteDecision) -> RouteDecision:
