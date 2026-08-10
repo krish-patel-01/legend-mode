@@ -56,6 +56,15 @@ class Settings(BaseSettings):
     disable_classifier: bool = False
     default_route: str = "chat"
 
+    # Don't let stage 3 put a request on the cheapest tier. Reaching the classifier at
+    # all means rules found no signal and the embedding margin was too thin — and the
+    # things `trivial` exists for (greetings, acknowledgements, identity) are caught by
+    # regex in app/router/rules.py long before that. So a classifier-labelled `trivial`
+    # is the 350M guessing about a request that already looked unfamiliar. Observed:
+    # "please check in the web then answer that question" was labelled trivial here, and
+    # the 350M answered it as a hotel booking. Escalates to `default_route`.
+    escalate_classifier_trivial: bool = True
+
     # Alias in models.yaml that answers "trivial" replies and backs the stage-3
     # classifier — the router "role", not necessarily a model literally named
     # "router". Currently the 350M `general` tier fills this role.
@@ -208,6 +217,11 @@ class Settings(BaseSettings):
     # Setting it to None restores the unnamed persona, which tells the model to say it
     # has no name rather than invent one or claim to be a commercial assistant.
     assistant_name: str | None = "Lucy"
+
+    # Whether the full persona tells the model what it can look up. **Measured, and the
+    # answer is no — see the table in app/persona.py.** Off by default; the flag stays
+    # because it is how the A/B was run and how the next person can re-run it.
+    persona_capabilities: bool = False
 
     @property
     def ollama_env(self) -> dict[str, str]:

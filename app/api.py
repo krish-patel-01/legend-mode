@@ -438,7 +438,12 @@ async def chat_completions(request: Request) -> Any:
     # Routing (`req`) was computed from the caller's original messages above; the
     # persona system prompt is added only for generation, so it never influences
     # which tier gets picked.
-    chat_messages = ensure_system_prompt(messages, settings.assistant_name, spec.persona)
+    chat_messages = ensure_system_prompt(
+        messages,
+        settings.assistant_name,
+        spec.persona,
+        capabilities=settings.persona_capabilities,
+    )
 
     if grounding is not None:
         chat_messages = _append_system(chat_messages, guardrails.as_system_note(grounding))

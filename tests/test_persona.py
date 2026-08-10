@@ -90,3 +90,33 @@ def test_ensure_system_prompt_does_not_mutate_input():
     messages = [{"role": "user", "content": "hi"}]
     ensure_system_prompt(messages, None)
     assert messages == [{"role": "user", "content": "hi"}]
+
+
+def test_the_capabilities_clause_is_off_unless_asked_for():
+    assert "find out rather than recall" not in build_system_prompt("Lucy", "full")
+
+
+def test_the_full_tier_can_be_told_what_it_can_look_up():
+    full = build_system_prompt("Lucy", "full", capabilities=True)
+    assert "find out rather than recall" in full
+    # What it can find out, never how to ask for it. Four tool definitions attached to
+    # this tier produced 2/6 spurious calls and 3/6 degraded answers — see the table in
+    # app/tools/gate.py — and call syntax in prose is the same information.
+    for mechanism in ("function", "tool_call", "JSON", "arguments", "web_search"):
+        assert mechanism not in full
+
+
+def test_the_brief_tier_never_gets_the_capabilities_clause():
+    """Same reason it never gets the name: at 350M the prompt already competes with the
+    question, and app/api.py escalates off this tier the moment a tool has run."""
+    brief = build_system_prompt(None, "brief", capabilities=True)
+    assert brief == build_system_prompt(None, "brief")
+
+
+def test_the_prompt_still_ends_on_a_directive():
+    """Note 1 of the module docstring: the 350M treats a trailing sentence as a completion
+    prefix, and the capabilities clause is a sentence about the assistant — exactly the
+    kind that came back as an answer to "hi". It has to sit mid-prompt in both branches."""
+    for name in ("Lucy", None):
+        prompt = build_system_prompt(name, "full", capabilities=True)
+        assert prompt.rstrip().endswith("unless real depth is asked for.")
