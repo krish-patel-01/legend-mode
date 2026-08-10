@@ -79,15 +79,36 @@ engines:
   # does not CAPTCHA: 10/10 results on three consecutive queries, ~2.0 s each, no
   # suspensions. So DuckDuckGo stays — through the door that stays open.
   #
-  # weight 2 is what makes it the *preferred* source rather than just another voice:
-  # SearXNG scores a result by summing weight/position across the engines that returned
-  # it, so doubling the weight floats DuckDuckGo's ranking to the top of the merge while
-  # google cse and bing still fill the tail.
+  # **It carries no weight boost, and the reason is the opposite of what was expected.**
+  # Weighting `duckduckgo web` to 2 floated it to the top of the merge as intended and
+  # the evidence got worse. Removing the weight did not fix it, which is what pointed at
+  # the real cause. Five market queries, top 5 snippets each, two rounds, scored with the
+  # figure regex from scripts/tool_bench.py — does the snippet actually contain a number,
+  # which is the only thing that matters to a model that has to answer with one:
+  #
+  #     google cse alone                    39/50
+  #     all three, google cse at weight 3   32/50   <- what ships
+  #     all three, equal weights            25/50
+  #     bing alone                          16/50
+  #     duckduckgo web alone                 0/50
+  #
+  # **Zero.** DuckDuckGo's HTML endpoint returns page blurbs, not content excerpts: for
+  # "current gold price per ounce" its top hit describes the service — "Live Price of Gold
+  # provides up-to-date live gold prices in multiple currencies" — where google cse
+  # surfaces the page that prints the figure. Merging it in does not add a weak voice, it
+  # dilutes a strong one, because cross-engine agreement rewards the popular navigational
+  # page over the page carrying today's number.
+  #
+  # It is kept anyway, unweighted, because it is not useless everywhere — it is useless
+  # for figures. "who won the last f1 race" is led by `2026 RACE RESULTS - Formula 1` on
+  # duckduckgo web and bing agreeing, over the `List of Formula One World Drivers'
+  # Champions` Wikipedia page that google cse puts first. Events want the page; prices
+  # want the number. Weighting google cse recovers the figures without giving up the
+  # events, which is why that line exists below rather than a shorter engine list here.
   - name: duckduckgo
     disabled: true
   - name: duckduckgo web
     disabled: false
-    weight: 2
 
   # Fallback, and insurance. Before this, `google cse` was the only engine reliably
   # answering — 20 of the 28 results on a typical query — which made one upstream the
@@ -100,3 +121,13 @@ engines:
   # `Suspended: access denied` on the second query.
   - name: bing
     disabled: false
+
+  # The counterweight to adding two engines. Enabling them cost 39/50 figure-carrying
+  # snippets down to 25/50 — see the table above — because a three-way merge ranks the
+  # page everyone returns above the page that has the answer on it. Weight 3 puts google
+  # cse back in front and recovers 32/50, while duckduckgo web and bing still contribute
+  # results and still cover the case where cse is the one that breaks.
+  #
+  # This is a ranking preference, not an exclusive: nothing here disables anything.
+  - name: google cse
+    weight: 3
