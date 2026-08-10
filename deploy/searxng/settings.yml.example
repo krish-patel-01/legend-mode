@@ -67,3 +67,36 @@ engines:
     disabled: true
   - name: startpage
     disabled: true
+
+  # **The `duckduckgo` engine is the lite/JSON endpoint, and it CAPTCHAs like the two
+  # above.** Measured 2026-08-10: it answered the first two queries of a session with 10
+  # results each, then returned `unresponsive_engines: [[duckduckgo, CAPTCHA]]` for every
+  # query after, and stayed that way. A search tool that works twice and then silently
+  # returns nothing is worse than one that was never enabled, because the failure looks
+  # like "no results" to everything downstream.
+  #
+  # `duckduckgo web` is the same index reached through html.duckduckgo.com instead, and it
+  # does not CAPTCHA: 10/10 results on three consecutive queries, ~2.0 s each, no
+  # suspensions. So DuckDuckGo stays — through the door that stays open.
+  #
+  # weight 2 is what makes it the *preferred* source rather than just another voice:
+  # SearXNG scores a result by summing weight/position across the engines that returned
+  # it, so doubling the weight floats DuckDuckGo's ranking to the top of the merge while
+  # google cse and bing still fill the tail.
+  - name: duckduckgo
+    disabled: true
+  - name: duckduckgo web
+    disabled: false
+    weight: 2
+
+  # Fallback, and insurance. Before this, `google cse` was the only engine reliably
+  # answering — 20 of the 28 results on a typical query — which made one upstream the
+  # single point of failure for the whole `web` tool family. bing was measured alongside
+  # the others and is the one that simply worked: 10 results on 3/3 queries, 0.6–0.9 s,
+  # no suspensions.
+  #
+  # The engines *not* added here were measured too, and failed differently: mojeek
+  # returned 0 results while reporting no error at all (the worst kind), and qwant went
+  # `Suspended: access denied` on the second query.
+  - name: bing
+    disabled: false
