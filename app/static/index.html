@@ -143,9 +143,17 @@ body::before {
 .reactor[data-tier="think"]   { --lit: var(--route-think); }
 .reactor[data-tier] .core { fill: var(--lit); filter: drop-shadow(0 0 6px var(--lit)); }
 
-/* In flight: both sweeps run, counter-rotating. Nothing else moves. */
+/* Idle is not dead. The amber console this replaced had a reticle counter-rotating at
+   9s and 6s whether or not anything was happening, and dropping it is what made the
+   header read as a screenshot — a mark that only moves during a request tells you
+   nothing the rest of the time, which is most of the time. The dashed ring turns
+   slowly and always, so the instrument is powered even when it is waiting. */
+.reactor .drift { transform-origin: 50% 50%; animation: orbit 24s linear infinite; }
+
+/* In flight: both sweeps run, counter-rotating, and the drift speeds up with them. */
 .reactor.busy .sweep { opacity: 1; animation: orbit 1.6s linear infinite; }
 .reactor.busy .sweep.rev { animation-duration: 2.4s; animation-direction: reverse; }
+.reactor.busy .drift { animation-duration: 6s; animation-direction: reverse; }
 .reactor.busy .core { animation: breathe 1.6s ease-in-out infinite; }
 @keyframes orbit { to { transform: rotate(360deg); } }
 @keyframes breathe { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
@@ -340,30 +348,39 @@ main {
 
 .err { color: var(--bad); border-color: var(--bad-line) !important; }
 
-/* Working. Bars running a wave. This replaced a single blip travelling a 1px
-   hairline, which was wrong for the one job the indicator has: while the reasoning
-   tier runs for minutes, the page has to look alive at a glance, and a 3px dot on a
-   dim line does not — it reads as trim. Bars are legible from across the room and
-   they carry the same meaning at any size. The elapsed clock beside them holds the
-   number (see addBot); the bars only have to keep moving.
+/* Working. Two things happen here and they are different problems.
 
-   Scaled from the centre, not the baseline, so they open and close like the reactor's
-   rings rather than bouncing like a download. */
-.working { display: flex; align-items: center; gap: 11px; color: var(--ice); font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; }
+   The **bars** answer "is it alive". A symmetric pulse is not enough: every bar spends
+   most of the cycle mid-height, so the row reads as a texture rather than as movement.
+   The peak is narrow instead — up by 22% of the cycle, back down by 55%, flat after —
+   and seven bars are staggered a seventh of the cycle apart, so a single crest travels
+   left to right with visible gaps behind it. Same idea as the old amber console's
+   counter-rotating reticle: motion has to have a direction to read as motion.
+
+   The **phase** answers "how long". It is not decoration and not a guess — see the
+   send path: the tier is known from the X-Legend-Route response header, which arrives
+   with the headers, well before the first token. So the label goes `routing` ->
+   `think · think` -> the answer itself, and on the reasoning tier you learn you are in
+   for minutes at the moment the router decides rather than at the moment it finishes. */
+.working { display: flex; align-items: center; gap: 10px; color: var(--ice); font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; }
 .working .bars { display: inline-flex; align-items: center; gap: 3px; height: 15px; flex: none; }
 .working .bars i {
-  width: 3px; height: 15px; background: var(--ice);
+  width: 2px; height: 15px; background: var(--ice);
   box-shadow: 0 0 7px var(--ice);
-  animation: pulse 1.05s ease-in-out infinite;
+  animation: crest 1.2s ease-out infinite;
 }
-.working .bars i:nth-child(2) { animation-delay: .12s; }
-.working .bars i:nth-child(3) { animation-delay: .24s; }
-.working .bars i:nth-child(4) { animation-delay: .36s; }
-.working .bars i:nth-child(5) { animation-delay: .48s; }
-@keyframes pulse {
-  0%, 100% { transform: scaleY(0.28); opacity: .38; }
-  50%      { transform: scaleY(1);    opacity: 1; }
+.working .bars i:nth-child(2) { animation-delay: .17s; }
+.working .bars i:nth-child(3) { animation-delay: .34s; }
+.working .bars i:nth-child(4) { animation-delay: .51s; }
+.working .bars i:nth-child(5) { animation-delay: .68s; }
+.working .bars i:nth-child(6) { animation-delay: .85s; }
+.working .bars i:nth-child(7) { animation-delay: 1.02s; }
+@keyframes crest {
+  0%, 55%, 100% { transform: scaleY(0.2); opacity: .28; }
+  22%           { transform: scaleY(1);   opacity: 1; }
 }
+.working .phase { color: var(--ice); transition: color .2s ease-out; }
+.working .phase.settled { color: var(--tier, var(--ice)); }
 .working .elapsed { color: var(--text-2); }
 
 /* ---------- composer ---------- */
@@ -550,7 +567,10 @@ aside {
   /* The sweep is the only "busy" signal that is purely motion, so with animation off
      it has to become a static state instead of vanishing. */
   .reactor.busy .sweep { opacity: 1; }
+  /* The bars stop, so the phase label and the clock beside them carry the whole
+     message — which they already do in text. */
   .working .bars i { animation: none; transform: none; opacity: 1; }
+  .reactor .drift { animation: none; }
 }
 
 /* Nothing may push the page sideways. A single overflowing element turns the whole
@@ -573,6 +593,8 @@ aside {
         <circle class="ring r-trivial" cx="20" cy="20" r="7.5"/>
         <circle class="ring r-chat"    cx="20" cy="20" r="12.5"/>
         <circle class="ring r-think"   cx="20" cy="20" r="17.5"/>
+        <circle class="drift" cx="20" cy="20" r="10" stroke="var(--ice-dim)"
+                stroke-width="1" stroke-dasharray="3 7"/>
         <path class="sweep"     d="M20 2.5 a17.5 17.5 0 0 1 15.2 8.75"/>
         <path class="sweep rev" d="M20 32.5 a12.5 12.5 0 0 1 -10.8 -6.25"/>
         <g class="tick">
@@ -686,6 +708,19 @@ function routeClass(route) {
    decision is still readable once the reply has scrolled away.
    Also updates the accessible name — the mark carries real state, so it cannot be
    aria-hidden decoration the way the old reticle was. */
+/* `<alias>;stage=<stage>;route=<tier>`, set by _route_header in app/api.py. Parsed
+   defensively: this drives a label during a wait, and a header that changes shape
+   should degrade to showing nothing rather than to showing rubbish. */
+function parseRouteHeader(value) {
+  if (!value) return null;
+  const [alias, ...rest] = value.split(";");
+  const parts = Object.fromEntries(
+    rest.map((p) => p.split("=")).filter((p) => p.length === 2)
+  );
+  if (!parts.route) return null;
+  return { alias: (alias || "").trim(), route: parts.route.trim() };
+}
+
 const reactor = $("#reactor");
 function setReactor({ busy, tier }) {
   if (busy !== undefined) reactor.classList.toggle("busy", busy);
@@ -693,8 +728,9 @@ function setReactor({ busy, tier }) {
     if (tier) reactor.dataset.tier = routeClass(tier);
     else delete reactor.dataset.tier;
   }
-  const state = reactor.classList.contains("busy")
-    ? "Router working"
+  const busyNow = reactor.classList.contains("busy");
+  const state = busyNow
+    ? reactor.dataset.tier ? `Router working — ${reactor.dataset.tier} tier` : "Router working"
     : reactor.dataset.tier ? `Router idle — last answer from the ${reactor.dataset.tier} tier`
     : "Router idle";
   reactor.setAttribute("aria-label", state);
@@ -963,8 +999,8 @@ function addBot() {
   el.className = "msg bot";
   el.dataset.idx = idx;
   el.innerHTML = `<div class="who">assistant</div>
-    <div class="body"><span class="working"><span class="bars"><i></i><i></i><i></i><i></i><i></i></span>
-    <span class="elapsed">routing</span></span></div>
+    <div class="body"><span class="working"><span class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+    <span class="phase">routing</span><span class="elapsed"></span></span></div>
     <div class="foot"></div>`;
   log.appendChild(el);
   log.scrollTop = log.scrollHeight;
@@ -982,6 +1018,20 @@ function addBot() {
   return {
     idx, el,
     stopTimer: () => clearInterval(tick),
+
+    /* The second phase of the wait. Called as soon as the response headers land, which
+       is before any token — so this is the console telling you which tier you are
+       waiting on while you are still waiting on it. The ring lights at the same moment
+       for the same reason. */
+    routed(route, alias) {
+      const p = el.querySelector(".phase");
+      if (p) {
+        p.textContent = alias ? `${route} · ${alias}` : route;
+        p.classList.add("settled");
+      }
+      el.style.setProperty("--tier", `var(--route-${routeClass(route)})`);
+      setReactor({ busy: true, tier: route });
+    },
     setText(text) {
       const body = el.querySelector(".body");
       body.textContent = text;
@@ -1054,6 +1104,13 @@ async function send() {
       markUnsent(userEl);
       return;
     }
+
+    // `X-Legend-Route: general;stage=rules;route=trivial` — sent with the headers, so
+    // it is here before generation has produced anything. Everything it says is
+    // restated in the trace panel afterwards, so a missing or malformed header just
+    // leaves the label reading `routing` and costs nothing.
+    const routed = parseRouteHeader(resp.headers.get("X-Legend-Route"));
+    if (routed) bot.routed(routed.route, routed.alias);
 
     // SSE. Note the server generates the whole reply up front when adjudication is
     // planned — an answer that might be replaced should not be streamed and then
