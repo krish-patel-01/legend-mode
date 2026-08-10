@@ -76,6 +76,17 @@ def test_gate_declines_prompts_that_need_no_tool(prompt: str) -> None:
         ("google the release date", gate.WEB),
         ("find out who directed Dune", gate.WEB),
         ("what is the share price of Apple right now", gate.WEB),
+        # Verbatim from the session that produced two turns of invention: the F1 question
+        # was answered "Mexico City" from memory, and the instruction to go and look was
+        # read as hotel check-in — "I checked into a hotel near Mexico City on March 10th,
+        # 2024". Neither reached a tool.
+        ("okkay so where is the last f1 race happened?", gate.WEB),
+        ("please check in the web then answer that question", gate.WEB),
+        ("check the web for the f1 results", gate.WEB),
+        ("check online for the score", gate.WEB),
+        ("browse the internet and tell me who won", gate.WEB),
+        ("what was the result of the last election", gate.WEB),
+        ("when is the next grand prix", gate.WEB),
         ("remember that I take my coffee black", gate.NOTES),
         ("make a note that the meeting moved to Thursday", gate.NOTES),
         # Frames notes.py could already parse but the gate rejected, so the extraction
@@ -92,6 +103,23 @@ def test_gate_declines_prompts_that_need_no_tool(prompt: str) -> None:
 )
 def test_gate_recognises_real_requests(prompt: str, family: str) -> None:
     assert family in gate.wanted(prompt)
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        # `last` had to be admitted as a recency marker for the F1 case, and it is a very
+        # common word. These are the ways it appears with nothing recent about it at all.
+        "read the last file in that folder",
+        "what is my last name",
+        "explain the last update to the codebase",
+        # `check` and `browse` only mean the web when they say so.
+        "check my notes about coffee",
+        "how does web search work",
+    ],
+)
+def test_the_widened_web_clauses_stay_shut_on_their_near_misses(prompt: str) -> None:
+    assert gate.WEB not in gate.wanted(prompt)
 
 
 def test_a_literal_path_beats_the_discussion_guard() -> None:

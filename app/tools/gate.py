@@ -107,14 +107,40 @@ _FILES = re.compile(
 # writes "search X" or "look up X" has asked for a search, whatever X is, and no further
 # evidence is needed. The rest are recency and market markers, which are the categories a
 # parametric model cannot answer from memory by definition.
+# **And the same failure happened again, in the same shape.** Two live turns:
+#
+#   "okkay so where is the last f1 race happened?"    no clause covers `last`
+#   "please check in the web then answer that
+#    question"                                        the verb list has no `check`
+#
+# The first was answered "Mexico City" from parametric memory. The second routed to the
+# 350M with no tools, which read "check in" as hotel check-in and replied *"I checked into
+# a hotel near Mexico City on March 10th, 2024"* — and then, challenged, apologised for
+# not having a booking system. Two turns of pure invention because the gate stayed shut.
+#
+# `check the web` is exactly as explicit an instruction as `search the web`; it was left
+# out because nobody writing the pattern happened to type it. `last` is the same recency
+# category as `latest`, which was already here.
 _WEB = re.compile(
     # An explicit instruction to go and look. Sufficient by itself.
     r"\b(?:search|google|look up|search for|find out|look online)\b"
+    # `check`/`browse` need their object, because "check my notes" and "check the file"
+    # are other families entirely. Up to two words between verb and object covers the
+    # prepositions people actually write: "check in the web", "check on the internet".
+    r"|\b(?:check|browse|look)(?:\s+\w+){0,2}\s+(?:the\s+)?(?:web|internet|online)\b"
+    r"|\bweb\s*search\b|\b(?:on|in|from)\s+the\s+(?:web|internet)\b"
     # Recency: things that are true now and were not true when the model was trained.
     # `today` is listed bare as well as possessive — "what is the weather today in
     # Ahmedabad" matched neither `today'?s` nor the weather clause below, and was
     # answered "I don't have access to real-time data".
     r"|\b(?:latest|current|recent|breaking)\b|\btoday'?s?\b|\b(?:tonight|tomorrow)\b"
+    # `last`/`next`/`previous` are recency too, but only against something that recurs —
+    # bare `last` is far too common ("the last file", "last name") to admit on its own.
+    # Anchored to event nouns instead, with room for a qualifier: "the last f1 race",
+    # "next general election", "most recent grand prix".
+    r"|\b(?:last|next|previous|most recent)(?:\s+\w+){0,2}\s+"
+    r"(?:race|grand\s*prix|gp|match|game|fight|final|season|episode|election|launch"
+    r"|update|result|results|score|scores|meeting|summit|earnings)\b"
     r"|\b(?:right now|at the moment|these days|so far|till now|up to now|as of)\b"
     # Markets and money.
     r"|\b(?:price of|stock price|share price|exchange rate|how much (?:is|does|did|has))\b"
