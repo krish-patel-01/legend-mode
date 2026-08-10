@@ -340,22 +340,30 @@ main {
 
 .err { color: var(--bad); border-color: var(--bad-line) !important; }
 
-/* Working. A scan travelling left to right, not bouncing bars — the wait here is a
-   pipeline running, and a bar chart that goes nowhere says "loading" where a sweep
-   says "something is moving through". The elapsed clock beside it does the real work
-   (see addBot): on the reasoning tier this runs for minutes. */
+/* Working. Bars running a wave. This replaced a single blip travelling a 1px
+   hairline, which was wrong for the one job the indicator has: while the reasoning
+   tier runs for minutes, the page has to look alive at a glance, and a 3px dot on a
+   dim line does not — it reads as trim. Bars are legible from across the room and
+   they carry the same meaning at any size. The elapsed clock beside them holds the
+   number (see addBot); the bars only have to keep moving.
+
+   Scaled from the centre, not the baseline, so they open and close like the reactor's
+   rings rather than bouncing like a download. */
 .working { display: flex; align-items: center; gap: 11px; color: var(--ice); font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; }
-.working .scan {
-  position: relative; width: 66px; height: 1px; flex: none;
-  background: var(--line-hot); overflow: visible;
+.working .bars { display: inline-flex; align-items: center; gap: 3px; height: 15px; flex: none; }
+.working .bars i {
+  width: 3px; height: 15px; background: var(--ice);
+  box-shadow: 0 0 7px var(--ice);
+  animation: pulse 1.05s ease-in-out infinite;
 }
-.working .scan::after {
-  content: ""; position: absolute; top: -1px; left: 0; height: 3px; width: 22px;
-  background: linear-gradient(90deg, transparent, var(--ice), transparent);
-  box-shadow: 0 0 8px var(--ice);
-  animation: scan 1.5s cubic-bezier(.4,0,.6,1) infinite;
+.working .bars i:nth-child(2) { animation-delay: .12s; }
+.working .bars i:nth-child(3) { animation-delay: .24s; }
+.working .bars i:nth-child(4) { animation-delay: .36s; }
+.working .bars i:nth-child(5) { animation-delay: .48s; }
+@keyframes pulse {
+  0%, 100% { transform: scaleY(0.28); opacity: .38; }
+  50%      { transform: scaleY(1);    opacity: 1; }
 }
-@keyframes scan { 0% { transform: translateX(-22px); } 100% { transform: translateX(66px); } }
 .working .elapsed { color: var(--text-2); }
 
 /* ---------- composer ---------- */
@@ -529,7 +537,7 @@ aside {
 }
 .panel-head.toggle:focus-visible { outline: 1px solid var(--ice); outline-offset: -2px; }
 
-/* Everything that moves here is ambient — the reactor sweep, the scan, the drawer.
+/* Everything that moves here is ambient — the reactor sweep, the bars, the drawer.
    None of it carries information the elapsed clock and the trace panel don't also
    state in text, so it can all stop without the console losing anything. */
 @media (prefers-reduced-motion: reduce) {
@@ -542,7 +550,7 @@ aside {
   /* The sweep is the only "busy" signal that is purely motion, so with animation off
      it has to become a static state instead of vanishing. */
   .reactor.busy .sweep { opacity: 1; }
-  .working .scan::after { animation: none; width: 100%; }
+  .working .bars i { animation: none; transform: none; opacity: 1; }
 }
 
 /* Nothing may push the page sideways. A single overflowing element turns the whole
@@ -955,7 +963,7 @@ function addBot() {
   el.className = "msg bot";
   el.dataset.idx = idx;
   el.innerHTML = `<div class="who">assistant</div>
-    <div class="body"><span class="working"><span class="scan"></span>
+    <div class="body"><span class="working"><span class="bars"><i></i><i></i><i></i><i></i><i></i></span>
     <span class="elapsed">routing</span></span></div>
     <div class="foot"></div>`;
   log.appendChild(el);
