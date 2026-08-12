@@ -62,18 +62,37 @@ services:
     environment:
       # Service names, not localhost -- inside the network each container's own
       # loopback is itself.
+      # Service names, not localhost -- inside the network each container's own
+      # loopback is itself.
       LEGEND_OLLAMA_HOST: "http://ollama:11434"
       LEGEND_SEARXNG_URL: "http://searxng:8080"
       LEGEND_RETRIEVAL_DB: "/app/data/corpus.db"
+
+      # **Overrides whatever .env says, deliberately.** Every path setting in .env is a
+      # path on the *host* and means nothing in here -- a vault at K:/vault or
+      # /home/you/vault does not exist in this filesystem, and the `notes` family would
+      # quietly report itself unavailable rather than fail in any visible way. The host
+      # value is used below as the mount source instead. `environment` takes precedence
+      # over `env_file`, which is what makes this work.
+      LEGEND_VAULT_PATH: "/vault"
     env_file:
       # Machine-specific settings and anything you would rather not put in this file.
       # Optional: an absent .env is not an error, and every setting has a default.
+      # Portable settings (thresholds, aliases, booleans) come through as-is; the paths
+      # above are re-pointed at container paths.
       - path: .env
         required: false
     volumes:
       # The retrieval index, so an ingested corpus survives a rebuild. Populate with:
       #   docker compose run --rm router python scripts/ingest.py
       - corpus:/app/data
+
+      # The Obsidian vault for the `notes` family. LEGEND_VAULT_PATH in .env is read
+      # here as the *host* directory to mount; inside the container it is always /vault.
+      # Falls back to an empty directory in the repo so that `docker compose up` works
+      # with no .env at all -- an unset vault is a working state, and the family simply
+      # reports itself unavailable.
+      - ${LEGEND_VAULT_PATH:-./deploy/empty-vault}:/vault
 
   searxng:
     image: searxng/searxng:latest
