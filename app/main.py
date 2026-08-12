@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
     try:
         version = await client.version()
         log.info("connected to Ollama %s at %s", version, settings.ollama_host)
-    except Exception as exc:  # noqa: BLE001 - fail loudly but still let uvicorn boot
+    except Exception as exc:
         log.error(
             "cannot reach Ollama at %s (%s). Is it running? "
             "Requests will error until it is.",
@@ -84,7 +84,7 @@ def _open_retrieval(client, registry, settings) -> Retrieval | None:
         return None
     try:
         store = VectorStore(settings.retrieval_db)
-    except Exception as exc:  # noqa: BLE001 - corpus is optional
+    except Exception as exc:
         log.warning("retrieval disabled: cannot open %s (%s)", settings.retrieval_db, exc)
         return None
 

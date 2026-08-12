@@ -107,7 +107,7 @@ class RouterEngine:
         """Swap in the fallback router if the primary tag is missing from Ollama."""
         try:
             available = await self._client.tags()
-        except Exception as exc:  # noqa: BLE001 - startup diagnostics only
+        except Exception as exc:
             log.warning("could not list Ollama tags: %s", exc)
             return self._router_spec
 
@@ -144,7 +144,7 @@ class RouterEngine:
         await self.verify_models()
         try:
             await self.embedder.build()
-        except Exception as exc:  # noqa: BLE001 - degrade to rules + classifier
+        except Exception as exc:
             log.warning("embedding stage unavailable: %s", exc)
         for spec in self._registry.pinned:
             await self._client.preload(spec)

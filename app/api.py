@@ -26,11 +26,11 @@ from app.persona import (
     TOOL_RESULT_NOTE,
     ensure_system_prompt,
 )
-from app.tools import dispatch
-from app.tools import gate as tools_gate
 from app.retrieval import service as retrieval_service
 from app.router.engine import anchor_text, extract_text, has_images
 from app.router.types import RouteRequest
+from app.tools import dispatch
+from app.tools import gate as tools_gate
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -165,7 +165,7 @@ async def tools_status(request: Request) -> dict[str, Any]:
                     f"{settings.searxng_url}/search", params={"q": "", "format": "json"}
                 )
             health["web"] = web_health(resp.status_code)
-        except Exception:  # noqa: BLE001 - any failure is the same news: it is not up
+        except Exception:
             health["web"] = "unreachable"
     if "notes" in enabled:
         vault = settings.vault_path

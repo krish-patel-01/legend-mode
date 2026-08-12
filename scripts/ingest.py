@@ -37,11 +37,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.backends.ollama import OllamaClient  # noqa: E402
-from app.config import get_registry, get_settings  # noqa: E402
-from app.retrieval.chunk import MIN_CHARS, NOTE_MIN_CHARS, chunk_markdown  # noqa: E402
-from app.retrieval.service import _normalize_query  # noqa: E402
-from app.retrieval.store import VectorStore  # noqa: E402
+from app.backends.ollama import OllamaClient
+from app.config import get_registry, get_settings
+from app.retrieval.chunk import MIN_CHARS, NOTE_MIN_CHARS, chunk_markdown
+from app.retrieval.service import _normalize_query
+from app.retrieval.store import VectorStore
 
 ROOT = Path(__file__).resolve().parent.parent
 

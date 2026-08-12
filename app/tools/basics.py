@@ -18,11 +18,10 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.guardrails import fmt, safe_eval
 from app.tools.registry import Tool
-
 
 # Cities people actually ask about, mapped to IANA zones. The dispatcher is asked for a
 # *city* rather than a zone name for a measured reason — see the note on the schema below
@@ -67,7 +66,7 @@ def _resolve(city: str) -> str | None:
 
 def now(city: str = "") -> str:
     """Current date and time — local by default, or in a named city."""
-    utc = datetime.now(timezone.utc)
+    utc = datetime.now(UTC)
     local = utc.astimezone()
     local_text = f"{local:%A, %d %B %Y, %H:%M:%S} local time (UTC{local:%z})"
     if not city.strip():

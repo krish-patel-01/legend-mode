@@ -149,7 +149,7 @@ class ToolRegistry:
             text, ok = f"Bad arguments for {name}: {exc}", False
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - see docstring
+        except Exception as exc:
             log.warning("tool %s failed: %s", name, exc)
             text, ok = f"{type(exc).__name__}: {exc}", False
 
