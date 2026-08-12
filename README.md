@@ -27,10 +27,26 @@ is architectural, not more parameters — nothing bigger fits.
 |---|---|---|---|
 | `general` | LFM2.5-350M | pinned | trivial replies, routing, tool selection |
 | `embed` | bge-small-en-v1.5 | pinned | routing embeddings only, never answers |
+| `instruct` | LFM2.5-1.2B-Instruct | swapped | ordinary conversation |
 | `think` | LFM2.5-1.2B-Thinking | swapped | reasoning, and the only tier that can verify |
 
-Two answering models, deliberately. That number came out of a measurement rather than a
-preference — see [the finding that shaped everything](#the-finding-that-shaped-everything).
+Three answering models and an embedder that never answers. Each of those numbers came out
+of a measurement rather than a preference — see
+[the finding that shaped everything](#the-finding-that-shaped-everything).
+
+The `instruct` tier exists because the 350M's conversational failures turned out not to be
+prompt-fixable. Replaying one real transcript as a conversation, it invented a maker twice
+and answered *"Okkay then what am I?"* with *"Ockkay"* — not a leak or an echo, just a
+failure to read the turn. The 1.2B Instruct build made none of those mistakes. It costs
+about 5× per turn (0.4 s → 1.9 s), and `chat` is where a question has to be understood
+rather than pattern-matched, so it is worth paying there and nowhere else.
+
+`chat` routes to the `instruct-q3` alias — Unsloth's *dynamic* 3-bit build, which measured
+46 tok/s against Q4_K_M's 41 at 600 MB against 731 MB, with the failure modes above still
+at zero. The Q4_K_M build stays registered as `instruct` so the comparison can be re-run.
+It is a **thinking-free** build on purpose: Ollama advertises a `thinking` capability for
+the Thinking GGUF, but `think: false` does not actually suppress the block, and a model
+trained to reason first is not the same as one trained to answer first.
 
 ## Quickstart
 
@@ -76,8 +92,8 @@ curl http://127.0.0.1:8000/v1/chat/completions \
   -d '{"model": "auto", "messages": [{"role": "user", "content": "hi"}]}'
 ```
 
-- `model: "auto"` (or omitted) lets the cascade choose. Any alias — `general`, `think` —
-  pins that tier instead.
+- `model: "auto"` (or omitted) lets the cascade choose. Any alias — `general`, `instruct`,
+  `instruct-q3`, `think` — pins that tier instead.
 - **Every response says why it was answered that way.** `x_legend_route` in the body and
   `X-Legend-Route` in the headers carry which model answered, which routing stage decided,
   its reasoning, which guardrail fired, whether retrieval or a tool ran, and the effort
@@ -100,6 +116,36 @@ route only" checks the routing without paying for a generation.
 ## What's inside
 
 A request falls through the cheapest thing that can handle it:
+
+```
+  request
+     │
+     ▼
+  routing        rules ──▶ embeddings ──▶ 350M classifier      stop at the first
+     │           regex     bge-small vs   only when the        stage that is sure
+     │           shapes    centroids      margin is thin
+     ▼
+  guardrails     exact answers computed, injected before generation
+     │
+     ▼
+  effort         how much to spend, decided before answering — free, so it
+     │           can be wrong without costing anything
+     ▼
+  retrieval      gated, not always-on
+     │
+     ▼
+  tools          basics · web · notes — picked by a different model than answers
+     │
+     ▼
+  generate       general · instruct-q3 · think
+     │
+     ▼
+  adjudication   capitulation guard always; cross-model critic only if enabled
+     │
+     ▼
+  response + x_legend_route          which model, which stage, why
+```
+
 
 1. **Routing** — three stages, cheapest first: regex rules, then embedding similarity
    against per-route centroids, then the 350M as a classifier if the margin is thin. Plus
@@ -159,7 +205,7 @@ fix.
 
 ```bash
 uv sync
-uv run pytest          # 478 tests, ~6s, no Ollama needed
+uv run pytest          # 487 tests, ~6s, no Ollama needed
 uv run ruff check .
 ```
 

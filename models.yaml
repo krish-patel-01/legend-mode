@@ -14,12 +14,13 @@
 # always overrides whatever's set here. The shared system prompt (identity, not
 # sampling) lives in app/persona.py, not here.
 #
-# Current layout — two answering models, deliberately. Everything else is parked.
-#   general (350M, pinned)  -> trivial replies + stage-3 classifier + everyday chat
+# Current layout — three answering models. Everything else is parked.
+#   general (350M, pinned)  -> trivial replies + stage-3 classifier
 #   embed (pinned)          -> routing only, never answers
+#   instruct-q3 (1.2B)      -> ordinary conversation; see the measurement in routes.yaml
 #   think (LFM2.5-1.2B)     -> reasoning, and the only tier that can verify an answer
 #
-# Why only these two. Measured on this machine over 16 question/answer pairs (8 right,
+# Why verification sits on the 1.2B. Measured over 16 question/answer pairs (8 right,
 # 8 wrong), asking each model to judge correctness:
 #
 #   350M                 50% accurate, rubber-stamped 8/8 wrong answers, 0.6s
@@ -54,9 +55,10 @@ models:
     # tagged in with `ollama cp`, so re-running import_models.py will find the tag
     # already present and skip it; the repo/file above are here so a from-scratch
     # machine can still resolve and import it normally.
-    # Serves three roles: trivial replies, stage-3 classification (see
-    # Settings.router_alias), and everyday chat — kept moderate rather than tuned
-    # purely for one of those. (The stage-3 classifier call in
+    # Serves two roles: trivial replies and stage-3 classification (see
+    # Settings.router_alias) — kept moderate rather than tuned purely for one of
+    # them. Everyday chat moved to the instruct tier; see routes.yaml. (The
+    # stage-3 classifier call in
     # app/router/classifier.py hardcodes its own temperature: 0.0 regardless of
     # this — this only affects the user-facing replies it generates directly.)
     # Short system prompt: at 350M a long instruction block competes with the actual
@@ -111,8 +113,9 @@ models:
   # `think: false` does not actually suppress the block, verified against the daemon. A
   # model trained to reason first is not the same thing as one trained to answer first.
   #
-  # Not wired into routes.yaml yet, so nothing routes here until the comparison says it
-  # should. Reachable meanwhile with an explicit {"model": "instruct"}.
+  # The comparison has since run and `chat` routes to the 3-bit build below, not to this
+  # one. Kept registered so the Q4-vs-UD-Q3 measurement in routes.yaml can be re-run;
+  # reachable with an explicit {"model": "instruct"}.
   - alias: instruct
     tier: instruct
     repo: unsloth/LFM2.5-1.2B-Instruct-GGUF
