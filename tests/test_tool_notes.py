@@ -19,7 +19,10 @@ from app.tools import notes
 def vault(tmp_path: Path) -> notes.NotesConfig:
     (tmp_path / ".obsidian").mkdir()
     (tmp_path / ".obsidian" / "app.json").write_text("{}", encoding="utf-8")
-    return notes.NotesConfig(tmp_path)
+    # Named, because the frontmatter tests below assert on `source: lucy` and an unnamed
+    # config would write `source: assistant` -- turning the two "not in out" assertions
+    # into ones that pass without testing anything.
+    return notes.NotesConfig(tmp_path, "Lucy")
 
 
 # --- confinement --------------------------------------------------------------
@@ -283,3 +286,43 @@ def test_repair_only_applies_to_an_opening_fragment(vault: notes.NotesConfig) ->
 
 def test_write_note_still_works_with_no_request(vault: notes.NotesConfig) -> None:
     assert "Wrote a new note" in notes.write_note("t", "some content", vault)
+
+
+# --- the source tag -----------------------------------------------------------
+#
+# It was a hardcoded `lucy` until the assistant's name became configurable. The tag is
+# how a user tells assistant-written notes from their own, so a rename that does not
+# follow through into it is a real, quiet wrong.
+
+
+def test_the_source_tag_follows_the_assistant_name(tmp_path: Path) -> None:
+    config = notes.NotesConfig(tmp_path, "Ada")
+    notes.write_note("N", "body", config)
+    body = (tmp_path / notes.SUBFOLDER / "N.md").read_text(encoding="utf-8")
+    assert "source: ada" in body
+
+
+def test_an_unnamed_assistant_gets_a_generic_source_tag(tmp_path: Path) -> None:
+    """Falls back to a generic tag, not to a name -- an unnamed persona has none."""
+    config = notes.NotesConfig(tmp_path, None)
+    notes.write_note("N", "body", config)
+    body = (tmp_path / notes.SUBFOLDER / "N.md").read_text(encoding="utf-8")
+    assert "source: assistant" in body
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("Lucy", "lucy"),
+        ("  Lucy  ", "lucy"),
+        ("Ada Lovelace", "ada-lovelace"),
+        # The value is unquoted YAML, so a colon or newline would produce a note
+        # Obsidian cannot parse. These are the cases that must not survive intact.
+        ("Bad: Name", "bad-name"),
+        ("line\nbreak", "line-break"),
+        ("!!!", "assistant"),
+        ("", "assistant"),
+    ],
+)
+def test_the_source_tag_is_yaml_safe(tmp_path: Path, name: str, expected: str) -> None:
+    assert notes.NotesConfig(tmp_path, name).source_tag == expected
