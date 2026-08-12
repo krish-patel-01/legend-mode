@@ -1,0 +1,396 @@
+"""Notes, written into an Obsidian vault as ordinary markdown files.
+
+A vault *is* a folder of markdown files — Obsidian adds no database and no format of its
+own — so this writes plain files and Obsidian picks them up live, with backlinks, graph
+and search all working. That is why this is not an MCP integration: a protocol and a
+second process to do `write_text` would buy nothing.
+
+**Every path is confined to the vault.** `_resolve` is the whole safety story here: a
+title arrives from a model, becomes a filename, and must not be able to escape. Titles
+like `../../.ssh/authorized_keys` are the obvious case, but on Windows the quiet ones
+matter more — a drive-relative `C:notes`, a reserved device name like `CON` or `NUL`, a
+trailing dot or space that the filesystem silently strips. The resolved path is compared
+against the resolved root, which is the only check that survives all of them.
+
+Notes are appended to rather than overwritten. An assistant that can silently replace a
+file the user has been adding to for a month is a worse tool than one that cannot write
+at all, and appending under a timestamped heading is what "remember this too" means
+anyway.
+
+This is deliberately separate from `app/memory.py`. That captures facts in passing, by
+regex, from ordinary conversation. This writes when the user *asks* for something to be
+written, and produces a document they can open, edit and link. The vault can also be fed
+to `scripts/ingest.py`, which puts these notes into the same retrieval corpus as anything
+else — so what the assistant writes becomes what it can later recall.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import unicodedata
+from datetime import datetime
+from pathlib import Path
+
+from app.tools.registry import Tool
+
+log = logging.getLogger(__name__)
+
+SUBFOLDER = "Notes"
+"""Everything written here lands in one folder, so the vault root stays the user's."""
+
+MAX_NOTE_CHARS = 20_000
+MAX_SEARCH_HITS = 8
+_SNIPPET = 240
+
+# Windows reserves these regardless of extension: CON.md is still CON.
+_RESERVED = {
+    "con", "prn", "aux", "nul",
+    *(f"com{i}" for i in range(1, 10)),
+    *(f"lpt{i}" for i in range(1, 10)),
+}
+_ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_WHITESPACE = re.compile(r"\s+")
+
+# The frontmatter value is unquoted YAML, so a name containing `:` or a newline would
+# produce a file Obsidian cannot parse. Anything outside this set collapses to a hyphen.
+_SOURCE_SAFE = re.compile(r"[^a-z0-9_-]+")
+
+
+def slugify(title: str) -> str | None:
+    """A title turned into a safe bare filename, or None if nothing usable is left.
+
+    Returns a *name*, never a path — the caller joins it to the notes folder. Anything
+    that looks like a directory separator is removed rather than escaped, because a title
+    has no legitimate reason to contain one.
+    """
+    text = unicodedata.normalize("NFC", title).strip()
+    text = _ILLEGAL.sub(" ", text)
+    text = _WHITESPACE.sub(" ", text).strip()
+    # A trailing dot or space is silently dropped by Windows, so "notes." and "notes"
+    # would be the same file while comparing as different strings.
+    text = text.strip(". ")
+    if not text or set(text) <= {"."}:
+        return None
+    if text.lower() in _RESERVED:
+        text = f"{text} note"
+    return text[:120]
+
+
+def _resolve(root: Path, title: str) -> Path | None:
+    """The file a title refers to, or None if it would land outside the vault."""
+    name = slugify(title)
+    if name is None:
+        return None
+    folder = (root / SUBFOLDER).resolve()
+    candidate = (folder / f"{name}.md").resolve()
+    # The comparison is done on resolved paths on purpose: symlinks, `..`, short 8.3
+    # names and case differences are all normalised by then, and nothing else reliably
+    # catches all four.
+    if candidate != folder / f"{name}.md" or not candidate.is_relative_to(folder):
+        return None
+    return candidate
+
+
+class NotesConfig:
+    def __init__(self, vault: Path | str | None, assistant_name: str | None = None) -> None:
+        self.vault = Path(vault).expanduser() if vault else None
+        self.assistant_name = assistant_name
+
+    @property
+    def source_tag(self) -> str:
+        """What `source:` says in a new note's frontmatter.
+
+        Derived from the assistant's name rather than written as a literal, so renaming
+        the assistant follows through into what it writes. It was a hardcoded `lucy` for
+        a while, which meant `LEGEND_ASSISTANT_NAME=Ada` produced notes still stamped
+        with the old name -- and this tag is what tells the user which notes were written
+        by the assistant rather than by them.
+
+        Falls back to a generic tag rather than to a name, since an unnamed persona
+        deliberately has none to use.
+        """
+        name = (self.assistant_name or "").strip().lower()
+        return _SOURCE_SAFE.sub("-", name).strip("-") or "assistant"
+
+
+def _unavailable(config: NotesConfig) -> str | None:
+    if config.vault is None:
+        return "No notes vault is configured. Set LEGEND_VAULT_PATH to an Obsidian vault."
+    if not config.vault.is_dir():
+        return f"The notes vault at {config.vault} does not exist."
+    return None
+
+
+# The frames people use to ask for a note. What follows one of these *is* the note, which
+# is a fact code can establish exactly and the dispatcher demonstrably cannot.
+_NOTE_FRAME = re.compile(
+    r"^\s*(?:(?:please\s+)?(?:can you\s+)?"
+    r"(?:make|take|add|write|save|jot|leave)\s+(?:me\s+)?(?:a\s+)?note\s*(?:that|about|saying)?"
+    r"|note\s+(?:that|down)|write\s+(?:this|that)\s+down\s*[:,]?"
+    r"|jot\s+down\s*(?:that)?"
+    r"|remember\s+(?:that|this)|don'?t\s+forget\s*(?:that)?)\s*[:,]?\s*(?P<body>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def content_from_request(text: str) -> str | None:
+    """The note body as the user actually phrased it, or None if this is not a note frame.
+
+    **Exists because the dispatcher amputates the fact, and prompting could not fix it.**
+    Asked to "make a note that the retro is on Friday" it passes content "the retro" — the
+    subject without the predicate, a note recording nothing. Measured across six such
+    requests, three lost their detail; the ones that survived ("write this down: X",
+    "remember that X") differ only in phrasing, not in difficulty.
+
+    Four attempts failed to shift it. Naming the mistake in the parameter description,
+    supplying a worked example of the exact failure, removing the quoted examples from the
+    tool description, and shortening the schema all moved the score around between 2/5 and
+    5/5 without ever fixing the frame that fails. What did emerge is the underlying
+    constraint: on this model total schema text trades tool-selection accuracy against
+    argument fidelity, so every description that makes the right tool get chosen makes its
+    arguments slightly worse.
+
+    That is a bad trade to keep paying when the answer is a regex. `app/guardrails.py`
+    makes the same argument for arithmetic and `app/memory.py` for remembered facts: where
+    code can establish something exactly, a model should not be asked to.
+    """
+    match = _NOTE_FRAME.match(text.strip())
+    if not match:
+        return None
+    body = match.group("body").strip().strip("\"'").strip()
+    return body or None
+
+
+def write_note(title: str, content: str, config: NotesConfig, request: str = "") -> str:
+    """Create a note, or append to it if it already exists.
+
+    `request` is the user's own words, supplied by the registry. It is used only to repair
+    a truncated `content`, never to replace one the model got right.
+    """
+    problem = _unavailable(config)
+    if problem:
+        return problem
+    assert config.vault is not None
+
+    # Repair, not override. The literal request wins only when the model's version is a
+    # strict opening fragment of it — which is exactly the amputation being fixed, and
+    # leaves a legitimately rephrased or summarised note alone.
+    literal = content_from_request(request) if request else None
+    if literal and len(literal) > len(content.strip()):
+        spoken = content.strip().lower().rstrip(".")
+        if not spoken or literal.lower().startswith(spoken):
+            content = literal
+
+    if not content.strip():
+        return "Nothing to write — the note content was empty."
+    path = _resolve(config.vault, title)
+    if path is None:
+        return f"{title!r} is not a usable note title."
+
+    content = content.strip()[:MAX_NOTE_CHARS]
+    stamp = datetime.now().astimezone()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if path.exists():
+        # Appending, not replacing. See the module docstring.
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n\n## {stamp:%Y-%m-%d %H:%M}\n\n{content}\n")
+        return f"Added to the existing note {path.stem!r} in the vault."
+
+    front = (
+        "---\n"
+        f"created: {stamp:%Y-%m-%d %H:%M}\n"
+        f"source: {config.source_tag}\n"
+        "---\n\n"
+    )
+    path.write_text(f"{front}# {path.stem}\n\n{content}\n", encoding="utf-8")
+    return f"Wrote a new note {path.stem!r} to the vault."
+
+
+def read_note(title: str, config: NotesConfig) -> str:
+    problem = _unavailable(config)
+    if problem:
+        return problem
+    assert config.vault is not None
+
+    path = _resolve(config.vault, title)
+    if path is None:
+        return f"{title!r} is not a usable note title."
+    if not path.exists():
+        # The dispatcher passes the words the user used — "coffee" — and the note is
+        # called "Coffee Black". Returning "there is no note called coffee" was
+        # technically true and useless: the writer apologised for a note that exists.
+        # One unambiguous near match is what the user meant, so read it and say so.
+        near = _search_titles(config.vault, title)
+        if len(near) == 1:
+            return _rendered(near[0], matched=title)
+        if near:
+            names = ", ".join(repr(p.stem) for p in near[:5])
+            return (
+                f"There is no note called exactly {path.stem!r}. These match: {names}. "
+                f"Ask for one of those by name."
+            )
+        return f"There is no note called {path.stem!r} in the vault."
+    return _rendered(path)
+
+
+def _strip_frontmatter(body: str) -> str:
+    return re.sub(r"^---.*?---", "", body, count=1, flags=re.DOTALL).strip()
+
+
+def _rendered(path: Path, *, matched: str | None = None) -> str:
+    """A note as the model should see it: no frontmatter, no duplicated heading.
+
+    The frontmatter is bookkeeping and the `# Title` line repeats the name that is
+    already in the sentence around it. Both were being handed over verbatim, and the
+    writer described the result as "a bit fragmented" — which it was.
+    """
+    body = _strip_frontmatter(path.read_text(encoding="utf-8")[:MAX_NOTE_CHARS])
+    body = re.sub(rf"^#\s*{re.escape(path.stem)}\s*\n+", "", body).strip()
+    lead = (
+        f"Your note {path.stem!r} (the closest match to {matched!r}) says:"
+        if matched
+        else f"Your note {path.stem!r} says:"
+    )
+    return f"{lead}\n\n{body}"
+
+
+def _markdown_files(vault: Path) -> list[Path]:
+    # `.obsidian` holds the vault's own config as JSON; `.trash` holds deleted notes.
+    return [
+        p
+        for p in vault.rglob("*.md")
+        if not any(part.startswith(".") for part in p.relative_to(vault).parts)
+    ]
+
+
+def _search_titles(vault: Path, query: str) -> list[Path]:
+    needle = (slugify(query) or query).lower()
+    return [p for p in _markdown_files(vault) if needle in p.stem.lower()]
+
+
+def search_notes(query: str, config: NotesConfig) -> str:
+    """Find notes by title or content. Reads the vault directly, so it is never stale."""
+    problem = _unavailable(config)
+    if problem:
+        return problem
+    assert config.vault is not None
+
+    query = query.strip()
+    if not query:
+        return "No search query was given."
+
+    terms = [t for t in re.split(r"\W+", query.lower()) if len(t) > 2]
+    scored: list[tuple[int, Path, str]] = []
+    for path in _markdown_files(config.vault):
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        haystack = f"{path.stem}\n{body}".lower()
+        # Title matches count double: a note called "Coffee" is a better answer to
+        # "coffee" than one that mentions coffee once in passing.
+        score = sum(haystack.count(t) for t in terms) + sum(
+            2 * path.stem.lower().count(t) for t in terms
+        )
+        if score:
+            scored.append((score, path, body))
+
+    if not scored:
+        return f"No notes matching {query!r}."
+
+    scored.sort(key=lambda row: (-row[0], row[1].stem))
+
+    # One hit means the question had one answer, so give the whole note instead of a
+    # snippet of it. This is also what lets `read_note` not exist — see `tools()`.
+    if len(scored) == 1:
+        return _rendered(scored[0][1])
+    lines = []
+    for _, path, body in scored[:MAX_SEARCH_HITS]:
+        text = _strip_frontmatter(body)
+        # Drop the note's own `# Title` line: it repeats the name printed right beside it,
+        # and leaving it in produced snippets like "Coffee Black: # Coffee Black I take my
+        # coffee black" that the writer read as fragmented text rather than as an answer.
+        text = re.sub(rf"^#\s*{re.escape(path.stem)}\s*\n+", "", text).strip()
+        lines.append(f'- "{path.stem}" — {" ".join(text.split())[:_SNIPPET]}')
+
+    count = "one note" if len(scored) == 1 else f"{len(scored)} notes"
+    return (
+        f"Found {count} in the user's own notes matching {query!r}. "
+        f"This is what they wrote:\n\n" + "\n".join(lines)
+    )
+
+
+def tools(config: NotesConfig) -> list[Tool]:
+    """Two tools, not three, and the count is the point.
+
+    **Argument quality on the dispatcher degrades as the schema list grows.** Asked to
+    "make a note that the Q3 review is on the 14th" with only `write_note` offered, the
+    350M passed content "the Q3 review is on the 14th". With three notes tools offered it
+    passed "the Q3 review" — the fact silently amputated, leaving a note that records
+    nothing. Same model, same temperature, same prompt; only the number of schemas
+    differed.
+
+    Dropping `read_note` is the cheapest way to shorten the list, and it costs nothing:
+    it overlapped `search_notes` almost entirely, the dispatcher chose between them close
+    to arbitrarily, and `search_notes` now returns the whole note when exactly one
+    matches — which is what reading a note *is*. That also fixes the case where the user
+    names a note imprecisely, since searching never needed the exact title.
+    """
+    return [
+        Tool(
+            name="write_note",
+            description=(
+                "Use when the user asks you to write something down, save a note, or keep "
+                "a record of something: 'make a note that...', 'write this down', "
+                "'save this'. Adds to the note if one with that title already exists."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "A short title, a few words. No slashes.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "The complete fact to record, as a full sentence. Keep every "
+                            "detail the user gave — dates, times, names, numbers. Do not "
+                            "shorten it to just the subject."
+                        ),
+                    },
+                },
+                "required": ["title", "content"],
+            },
+            run=lambda title, content, request="": write_note(
+                title, content, config, request
+            ),
+            family="notes",
+            writes=True,
+            # The dispatcher amputates the fact on "make a note that X is on Y"; the text
+            # after the frame is the note, and code can take it exactly.
+            wants_request=True,
+        ),
+        Tool(
+            name="search_notes",
+            description=(
+                "Use when the user asks what they wrote or noted about something, or asks "
+                "you to read a note back. Searches titles and contents, and returns the "
+                "whole note when only one matches."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The subject to look for, a word or two.",
+                    }
+                },
+                "required": ["query"],
+            },
+            run=lambda query: search_notes(query, config),
+            family="notes",
+        ),
+    ]

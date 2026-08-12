@@ -47,7 +47,7 @@ BASELINE = ROOT / "evals" / "baseline.json"
 
 CATEGORIES = (
     "computable", "reasoning", "dispute", "factual", "persona", "cheap",
-    "effort", "retrieval",
+    "effort", "retrieval", "tools",
 )
 
 _WORD_NUMBERS = {
@@ -194,6 +194,21 @@ def check(reply: str, meta: dict[str, Any], expect: dict[str, Any]) -> list[str]
         if got_r != bool(want_r):
             problems.append(f"retrieved={meta.get('retrieved')!r}, expected {want_r}")
 
+    # `tools: false` asserts nothing ran; a name or list asserts which. The false case is
+    # the one that matters most and the one worth writing out for ordinary prompts: the
+    # measured cost of attaching tool schemas to a request that does not need them is the
+    # model refusing questions it can answer — "I'm sorry, but I can't provide that
+    # information" to *what is the capital of France*. See app/tools/gate.py.
+    if (want_t := expect.get("tools")) is not None:
+        called = [c["name"] for c in ((meta.get("tools") or {}).get("calls") or [])]
+        if want_t is False:
+            if called:
+                problems.append(f"tools ran ({', '.join(called)}), expected none")
+        else:
+            wanted = [want_t] if isinstance(want_t, str) else list(want_t)
+            if not any(name in called for name in wanted):
+                problems.append(f"tools={called or 'none'}, expected one of {wanted}")
+
     return problems
 
 
@@ -317,7 +332,7 @@ def main() -> int:
 
     try:
         runner._client.get("/v1/models").raise_for_status()
-    except Exception as exc:  # noqa: BLE001 - a missing server is the common mistake
+    except Exception as exc:
         print(f"cannot reach {args.base_url}: {exc}\n"
               f"start it with: uv run uvicorn app.main:app --port 8000", file=sys.stderr)
         return 2

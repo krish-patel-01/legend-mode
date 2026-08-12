@@ -45,7 +45,7 @@ class LlmClassifier:
                 ],
                 options={"temperature": 0.0, "num_predict": 8},
             )
-        except Exception as exc:  # noqa: BLE001 - never let routing take down a request
+        except Exception as exc:
             log.warning("classifier failed, falling back: %s", exc)
             return None
 

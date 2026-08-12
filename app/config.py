@@ -56,6 +56,15 @@ class Settings(BaseSettings):
     disable_classifier: bool = False
     default_route: str = "chat"
 
+    # Don't let stage 3 put a request on the cheapest tier. Reaching the classifier at
+    # all means rules found no signal and the embedding margin was too thin — and the
+    # things `trivial` exists for (greetings, acknowledgements, identity) are caught by
+    # regex in app/router/rules.py long before that. So a classifier-labelled `trivial`
+    # is the 350M guessing about a request that already looked unfamiliar. Observed:
+    # "please check in the web then answer that question" was labelled trivial here, and
+    # the 350M answered it as a hotel booking. Escalates to `default_route`.
+    escalate_classifier_trivial: bool = True
+
     # Alias in models.yaml that answers "trivial" replies and backs the stage-3
     # classifier — the router "role", not necessarily a model literally named
     # "router". Currently the 350M `general` tier fills this role.
@@ -143,7 +152,22 @@ class Settings(BaseSettings):
     # around 0.6, so this is well above the naive midpoint on purpose — injecting a
     # merely-plausible passage is how retrieval makes answers worse rather than better.
     # Calibrate with: uv run python scripts/ingest.py --probe "your question"
-    retrieval_min_score: float = 0.66
+    #
+    # **Raised from 0.66 after a live false positive.** Asked "what is the current gold
+    # price?", retrieval injected README.md's Guardrails section at 0.666 and the answer
+    # came back citing it. Scored across the corpus afterwards:
+    #
+    #   which model verifies answers in this system   0.767   wanted
+    #   how does the router decide which model         0.782   wanted
+    #   what is the effort controller                  0.752   wanted
+    #   how do I add a new route -> Welcome.md         0.688   not wanted (vault boilerplate)
+    #   what is the current gold price -> README       0.666   not wanted
+    #
+    # 0.70 separates those with room on both sides. Note the false positives cluster just
+    # above the old cut-off rather than far below it: a threshold set from a handful of
+    # questions drifts as the corpus grows, and this one had only ever been checked
+    # against questions the corpus could actually answer.
+    retrieval_min_score: float = 0.70
 
     # Memories need their own, lower cut-off. 0.66 was calibrated against 800-character
     # document chunks; a memory is one short sentence, and short-to-short similarity runs
@@ -158,6 +182,34 @@ class Settings(BaseSettings):
     # correct parametric knowledge.
     retrieval_memory_min_score: float = 0.55
 
+    # --- tools (app/tools/) ------------------------------------------------
+    tools_enabled: bool = True
+
+    # Which families may ever be offered, regardless of what the gate thinks. Narrowing
+    # this is the hard override; the gate is the automatic one.
+    tool_families: list[str] = ["basics", "web", "notes"]
+
+    # The model that picks the tool. **Not the model that answers** — those are different
+    # jobs and measurably different models here. Over six tool cases and six prompts
+    # needing none, the 350M picked correctly 6/6 at 1.0 s while the 1.2B instruct managed
+    # 3/6 at 4.0 s, and every model holding tool schemas answered ordinary questions worse
+    # (the 1.2B refused to name the capital of France). Picking a function needs no world
+    # knowledge, which is why the smallest model wins it — the same reason it backs the
+    # stage-3 classifier. See the table in app/tools/gate.py.
+    tool_dispatcher_alias: str = "general"
+
+    # Local SearXNG for the `web` family. Needs `json` under `search.formats` in its
+    # config or every request 403s — see deploy/searxng/settings.yml.
+    searxng_url: str = "http://127.0.0.1:8080"
+    web_timeout: float = 15.0
+    web_max_results: int = 5
+
+    # An Obsidian vault for the `notes` family — a plain folder of markdown files, which
+    # is all a vault is. Left unset here and configured in `.env`, which is gitignored:
+    # this is a path on one machine, not a project default, and the `notes` family simply
+    # reports itself unavailable when it is None.
+    vault_path: Path | None = None
+
     # The name is picked, so this is a default rather than an env-only setting: the
     # named branch of app/persona.py is what carries the personality, and leaving it
     # unset would quietly ship the anonymous prompt to anyone cloning this.
@@ -165,6 +217,11 @@ class Settings(BaseSettings):
     # Setting it to None restores the unnamed persona, which tells the model to say it
     # has no name rather than invent one or claim to be a commercial assistant.
     assistant_name: str | None = "Lucy"
+
+    # Whether the full persona tells the model what it can look up. **Measured, and the
+    # answer is no — see the table in app/persona.py.** Off by default; the flag stays
+    # because it is how the A/B was run and how the next person can re-run it.
+    persona_capabilities: bool = False
 
     @property
     def ollama_env(self) -> dict[str, str]:

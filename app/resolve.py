@@ -33,7 +33,7 @@ def find_local(patterns: list[str]) -> Path | None:
         if not root.is_dir():
             continue
         for pattern in patterns:
-            matches = sorted((p for p in root.glob(pattern) if _plausible(p)))
+            matches = sorted(p for p in root.glob(pattern) if _plausible(p))
             if matches:
                 return matches[0]
     return None
@@ -66,6 +66,6 @@ def resolve_mmproj(spec: ModelSpec, allow_download: bool = True) -> Path | None:
     if allow_download and spec.auto_download:
         try:
             return download(spec.repo, spec.mmproj_file)
-        except Exception as exc:  # noqa: BLE001 - vision is a bonus, not a requirement
+        except Exception as exc:
             log.warning("could not fetch mmproj for %s: %s", spec.alias, exc)
     return None

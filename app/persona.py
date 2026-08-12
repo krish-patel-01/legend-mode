@@ -1,8 +1,9 @@
 """System prompt shared across every tier.
 
 Kept separate from any one model's config since it's about the assistant's identity
-and behavior, not a particular tier's sampling settings. No name is hardcoded — one
-hasn't been picked yet — so the prompt says so rather than inventing one.
+and behavior, not a particular tier's sampling settings. The name comes from
+`LEGEND_ASSISTANT_NAME` (default `Lucy`); with it unset the prompt tells the model to
+say it has no name rather than invent one, and both wordings are measured below.
 
 Three things here were settled by measurement against the actual models, not by
 guessing, and the wording should not be "tidied" without re-running that check
@@ -99,6 +100,47 @@ _FULL_NAMED_STYLE = (
     "overclaiming. You say when you don't know something instead of guessing."
 )
 
+# What the assistant can find out — and deliberately not how.
+#
+# **Measured 2026-08-10, and it does not ship: `persona_capabilities` defaults to False.**
+# Full suite, 53 cases, then the persona category re-run at 4 samples to check the one
+# category that moved:
+#
+#     persona case                      off      on (mid-prompt)   on (after identity)
+#     denies-being-chatgpt              100%           50%                 50%
+#     user-name-is-not-assistant-name   100%          100%                 75%
+#     category                          100%           92%                 88%
+#
+# Asked "are you ChatGPT?" the on-arm answered *"Yes, I am a helpful assistant here to
+# provide direct answers."* Two positions were tried on the theory that this was note 1
+# again — the clause splitting the identity block — and moving it after the identity
+# material made it worse, not better. So it is the clause's presence, not its placement,
+# the same way it was the name's presence for the 350M above.
+#
+# The idea was sound and the precedent was real: `TOOL_RESULT_NOTE` below does this same
+# job *after* a tool has run and is worth 2/6 -> 4/6. What the suite cannot show is the
+# gain — `tools` was already 8/8 in the control, so there was no headroom for fewer
+# refusals to appear in, and scripts/tool_bench.py runs with no persona at all by design.
+# A fair re-test would need a case that fails today because the model does not believe it
+# can look something up. Until that exists this is a cost with no measured benefit.
+#
+# The wording is kept because it is the thing that was measured, and because the shape is
+# right even if the result was not: capabilities as a fact about itself, no verbs the
+# model could imitate, and no promise that a lookup has happened — the clause has to
+# survive the case where the gate stays shut, or it licenses exactly the invention it is
+# meant to prevent. What was never on the table is telling the model *how* to call
+# anything: four tool definitions attached to this tier produced 2/6 spurious calls and
+# 3/6 degraded answers, including "I'm sorry, but I can't provide that information" to
+# *what is the capital of France* (app/tools/gate.py). Call syntax in prose is the same
+# information through a different door, and the split in app/tools/dispatch.py exists to
+# keep it out.
+_CAPABILITIES = (
+    "Some things you can find out rather than recall: the current date and time, the "
+    "state of this machine, what is on the web, and the user's own notes. When a "
+    "question needs one of those, the answer is placed in the conversation for you to "
+    "read, and you use it."
+)
+
 # {identity} sits mid-prompt on purpose — see note 1 above.
 _BRIEF = "You are a helpful local AI assistant. {identity} Answer the user's question directly and concisely."
 _FULL = (
@@ -107,6 +149,34 @@ _FULL = (
     "unless real depth is asked for."
 )
 
+
+# Appended when a tool ran, to the model that writes the answer — never to the one that
+# picks the tool (see app/tools/dispatch.py for why those are different models).
+#
+# **It is there to break a prior, not to explain the mechanism.** Handed a correct tool
+# result as a `role: "tool"` turn, the 1.2B still answered "I don't have real-time
+# capabilities to check the current local time" and "I don't have access to your private
+# notes". That is the same refusal posture measured in app/tools/gate.py, arriving by a
+# different route: the model's belief that it cannot know something outranks the evidence
+# that it just did.
+#
+# The gain is accuracy, not only tone. Given "13:20:11 in Tokyo", the same model answered
+# "5:20 PM" without this note and "1:20 PM" with it. Six cases across the three families,
+# persona prompt held constant:
+#
+#   no note   2/6   refusals on the clock and notes cases, wrong conversion on the clock
+#   note      4/6   clock, search, machine state and one notes case all correct
+#
+# A third clause was tried and dropped — telling the model the user had not seen the tool
+# output and to quote it back. It fixed nothing and cost accuracy elsewhere, turning
+# "40.5 GB free of 97.7 GB" into "roughly 4 GB of available space". The two cases still
+# failing are single-sentence notes the model treats as self-evident, which is a small
+# enough residue to leave alone rather than tune the prompt around.
+TOOL_RESULT_NOTE = (
+    "You just looked this up with a tool, so you do have access to it and it is current. "
+    "Answer from it directly. Never say you lack access or real-time information when a "
+    "tool has already returned the answer."
+)
 
 # Appended when the sticky stage sees the user disputing the previous answer.
 #
@@ -146,31 +216,50 @@ CORRECTION_NOTE = (
 )
 
 
-def build_system_prompt(assistant_name: str | None, style: str = "full") -> str:
+def build_system_prompt(
+    assistant_name: str | None, style: str = "full", *, capabilities: bool = False
+) -> str:
     brief = style == "brief"
-    # The `brief` tier is never told the name, whatever `assistant_name` says. See the
-    # note above _BRIEF_NAMED_STYLE: putting it in this prompt at all makes the 350M
-    # answer "Lucy" to everything, including "what is the capital of France".
+    # The `brief` tier never gets the capabilities clause either, and for the same reason
+    # it never gets the name: at 350M the prompt is already competing with the question,
+    # and this tier does not read tool output anyway — app/api.py escalates off it the
+    # moment a tool has run.
+    caps = f" {_CAPABILITIES}" if capabilities and not brief else ""
     if assistant_name and not brief:
         # The named prompt replaces the opener rather than filling {identity}, because the
         # wording that measured best puts the name in the first clause. Ends on the same
         # directive as the unnamed one — see note 1.
+        # The capabilities clause goes *after* the identity material, not inside it.
+        # Measured: splitting the block — opener, capabilities, style — took
+        # `denies-being-chatgpt` from 100% to 50%, with "are you ChatGPT?" answered
+        # "Yes, I am a helpful assistant here to provide direct answers." Two sentences
+        # about lookups between "you say your name" and the manner clause is enough to
+        # bury the identity signal. Same positional effect as note 1, one clause in.
         return (
             f"{_FULL_NAMED_OPENER.format(name=assistant_name)} {_FULL_NAMED_STYLE} "
-            f"{_FULL_NAMED} Don't bring up how you work internally unless the user asks. "
-            f"Answer directly and concisely unless real depth is asked for."
+            f"{_FULL_NAMED}{caps} Don't bring up how you work internally unless the user "
+            f"asks. Answer directly and concisely unless real depth is asked for."
         )
-    identity = _BRIEF_UNNAMED if brief else _FULL_UNNAMED
+    # Folded into {identity} rather than appended, so it lands mid-prompt here too and
+    # the prompt still ends on a behavioural directive — note 1 again.
+    identity = (_BRIEF_UNNAMED if brief else _FULL_UNNAMED) + caps
     return (_BRIEF if brief else _FULL).format(identity=identity)
 
 
 def ensure_system_prompt(
-    messages: list[dict], assistant_name: str | None, style: str = "full"
+    messages: list[dict],
+    assistant_name: str | None,
+    style: str = "full",
+    *,
+    capabilities: bool = False,
 ) -> list[dict]:
     """Prepend the persona system message unless the caller already supplied one."""
     if messages and messages[0].get("role") == "system":
         return messages
     return [
-        {"role": "system", "content": build_system_prompt(assistant_name, style)},
+        {
+            "role": "system",
+            "content": build_system_prompt(assistant_name, style, capabilities=capabilities),
+        },
         *messages,
     ]

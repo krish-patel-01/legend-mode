@@ -13,7 +13,6 @@ import pytest
 from app import adjudicate
 from app.effort import Plan
 
-
 # --- extracting the answer's number ------------------------------------------
 
 

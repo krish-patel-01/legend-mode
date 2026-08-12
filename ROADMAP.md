@@ -263,17 +263,56 @@ GRPO still could not consistently win Wordle, and gpt-oss-20b was needed for tha
 ceiling model here is 1.2B. Revisit only with an NVIDIA GPU — and note the paper's own
 finding cuts the same way: systems are planner-limited, and architecture beat scaling.
 
-**Contextual bandit over the router — now unblocked.** Five routes, reward from whether a
-guardrail passed and how long the answer took, trained on decisions `/route/history`
-already logs. No GPU, ~50 lines of numpy. It was waiting on step 2, which is built, so the
-"is this better or is this noise" question now has an answer. The highest-value target is
-the stage that measurably guesses: the classifier mis-filed a real question as `trivial`
-during step 3 testing, and that is exactly a decision a bandit could learn from feedback
-the system already collects.
+**Chain-of-thought scaffolding on the 350M — tested and dropped.** The idea was to buy the
+350M enough reasoning to stand in for a 1.2B call. It buys some and not enough: a
+step-by-step nudge takes it from 50% to 64% on 14 multi-step word problems (57% once the
+persona prompt production actually sends is included), against 93% from the instruct tier
+at 5 s and 100% from the reasoning tier. Sampling and voting made it *worse* — 43%, and
+identical at k=1, 3 and 5, because the model's errors scatter instead of converging, so
+there is no mode to take. The agreement-gated version is dominated by simply calling the
+1.2B, which is both cheaper and more accurate. Full numbers and the reasoning in
+`scripts/cot_bench.py`, which is kept as a reusable arm-comparison harness.
 
-**Tool execution.** `tools` is forwarded and `tool_calls` returned untouched; no tier
-advertises tool support. `app/router/engine.py` documents the extension point. Deliberately
-after routing is trustworthy.
+Two things came out of it that outlived the idea. **The same nudge makes the 1.2B worse**
+(93% -> 86%), so CoT is a small-model crutch here, not a general improvement. And **a
+system prompt that dictates output format displaces the question on the 350M** — asked for
+a specific answer line, it emitted the template, angle brackets included, in 13 tokens.
+That is `app/persona.py`'s "never end a system prompt on a quotable sentence" for the third
+time, and it is why the CoT nudge is put in the user turn.
+
+**Contextual bandit over the router — technically unblocked, deliberately last.** Context
+from the request's features, arms are the three routes, reward from whether a guardrail
+passed, whether the next turn disputed the answer, and how long it took. No GPU, ~50 lines
+of numpy. The target would be the part of the cascade that measurably guesses: the
+classifier mis-filed a real question as `trivial` during step 3 testing.
+
+It is parked behind everything else — including the work above it in this file — for three
+reasons, none of which is difficulty:
+
+- **The training data does not exist.** `app/history.py` is a 200-entry in-memory ring
+  buffer with no outcome field, wiped on every restart. Nothing has ever been persisted, so
+  there is no corpus to learn from and no way to check a learned policy against the past.
+- **The reward is sparse.** Guardrail pass covers only computable questions, latency always
+  argues for the cheapest route, and the one clean signal — a dispute on the following turn
+  — is rare by design. Single-user traffic is tens of requests a day, which is thin for a
+  policy over 384-dimensional context.
+- **The baseline keeps improving for free.** Switching stage 2 from centroids to
+  nearest-example took its decision rate on everyday prompts from 5% to 50% in one commit.
+  A learned router has to beat a hand-tuned cascade that is still moving.
+
+If it is picked up, the order is: persist decisions *and* their outcomes to sqlite first —
+worth doing on its own, since it is how a misroute gets found at all — and then learn the
+two thresholds (`min_score`, `min_margin`) rather than a full policy. Two numbers need far
+less evidence than a policy over embeddings.
+
+**Tool execution — now built.** `app/tools/` dispatches server-side across three families
+(`basics`, `web`, `notes`), behind a gate, with the tool *picked* by a different model than
+the one that answers. That split is not an optimisation: attaching tool schemas measurably
+degrades every model here, to the point where the 1.2B instruct refused to name the capital
+of France. See the table in `app/tools/gate.py` and
+[docs/architecture.md](docs/architecture.md#tools).
+
+What remains is breadth — more families — rather than mechanism.
 
 **Vision.** Parked with the Qwen3.5-0.8B tier; image requests return 422.
 

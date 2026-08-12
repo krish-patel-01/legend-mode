@@ -1,0 +1,15 @@
+# The repository stores text as LF. Without this, a Windows contributor's autocrlf
+# setting decides the line endings in a commit, and the shell scripts under deploy/
+# stop working the moment they are copied into a Linux container -- CRLF makes the
+# kernel look for an interpreter named "/usr/bin/env bash\r", which does not exist.
+* text=auto eol=lf
+
+# Binary, or line-ending-sensitive regardless of platform.
+*.png binary
+*.jpg binary
+*.gguf binary
+*.db binary
+*.canvas text eol=lf
+
+# Generated and reviewed as a unit; collapsing it keeps PR diffs readable.
+uv.lock linguist-generated=true -diff

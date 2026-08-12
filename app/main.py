@@ -22,6 +22,7 @@ from app.history import HistoryStore
 from app.memory import MemoryStore
 from app.retrieval import Retrieval, VectorStore
 from app.router.engine import RouterEngine
+from app.tools.registry import build_registry
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -39,7 +40,7 @@ async def lifespan(app: FastAPI):
     try:
         version = await client.version()
         log.info("connected to Ollama %s at %s", version, settings.ollama_host)
-    except Exception as exc:  # noqa: BLE001 - fail loudly but still let uvicorn boot
+    except Exception as exc:
         log.error(
             "cannot reach Ollama at %s (%s). Is it running? "
             "Requests will error until it is.",
@@ -62,6 +63,9 @@ async def lifespan(app: FastAPI):
     app.state.memory = (
         MemoryStore(client, registry.embedder, retrieval.store) if retrieval else None
     )
+    # Built once: the families are fixed at startup and each Tool holds only a callable
+    # and a schema, so there is nothing per-request to rebuild.
+    app.state.tools = build_registry(settings) if settings.tools_enabled else None
     log.info("legend-mode ready (router=%s)", engine.router_spec.tag)
 
     yield
@@ -80,7 +84,7 @@ def _open_retrieval(client, registry, settings) -> Retrieval | None:
         return None
     try:
         store = VectorStore(settings.retrieval_db)
-    except Exception as exc:  # noqa: BLE001 - corpus is optional
+    except Exception as exc:
         log.warning("retrieval disabled: cannot open %s (%s)", settings.retrieval_db, exc)
         return None
 

@@ -10,14 +10,17 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.config import ModelRegistry, ModelSpec, RouteTable, Settings, load_models, load_routes
+from app.config import (
+    ROOT,
+    ModelRegistry,
+    RouteTable,
+    Settings,
+    load_models,
+    load_routes,
+)
 from app.router import rules
-from app.router.classifier import LlmClassifier
-from app.router.embed import EmbeddingRouter
 from app.router.engine import RouterEngine, anchor_text, extract_text, has_images
 from app.router.types import RouteRequest
-from app.config import ROOT
-
 
 VOCAB_DIM = 64
 
@@ -478,3 +481,38 @@ def test_has_images_detects_content_parts():
 def test_has_images_false_for_plain_text():
     messages = [{"role": "user", "content": "just text"}]
     assert has_images(messages) is False
+
+
+async def test_a_classifier_guess_of_trivial_escalates(registry, routes, settings):
+    """Reaching stage 3 means rules found no signal and the embedding margin was thin.
+    Everything `trivial` is for is caught by regex first, so a classifier verdict of
+    `trivial` is the 350M guessing about a request that already looked unfamiliar.
+
+    The live case: "please check in the web then answer that question" was labelled
+    trivial here, and the 350M read "check in" as hotel check-in and invented a stay in
+    Mexico City."""
+    client = StubClient(classifier_label="trivial")
+    eng = RouterEngine(client, registry, routes, settings)
+    decision = await eng.route(RouteRequest(text="zzz completely novel gibberish qq", message_count=2))
+    assert decision.stage == "classifier"
+    assert decision.route == settings.default_route
+    assert "guess" in decision.reason
+
+
+async def test_the_classifier_still_decides_every_other_route(registry, routes, settings):
+    """The escalation is aimed at one route, not at stage 3 generally — a classifier that
+    says `think` has picked the expensive tier and there is nothing to second-guess."""
+    client = StubClient(classifier_label="think")
+    eng = RouterEngine(client, registry, routes, settings)
+    decision = await eng.route(RouteRequest(text="zzz completely novel gibberish qq", message_count=2))
+    assert decision.route == "think"
+    assert "guess" not in decision.reason
+
+
+async def test_the_cheap_guess_guard_can_be_turned_off(registry, routes, settings):
+    client = StubClient(classifier_label="trivial")
+    eng = RouterEngine(
+        client, registry, routes, settings.model_copy(update={"escalate_classifier_trivial": False})
+    )
+    decision = await eng.route(RouteRequest(text="zzz completely novel gibberish qq", message_count=2))
+    assert decision.route == "trivial"

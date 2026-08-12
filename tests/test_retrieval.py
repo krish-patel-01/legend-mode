@@ -19,7 +19,6 @@ from app.retrieval.service import (
 )
 from app.retrieval.store import Hit, IndexMismatch, VectorStore
 
-
 # --- chunking ----------------------------------------------------------------
 
 _DOC = """# Legend Mode

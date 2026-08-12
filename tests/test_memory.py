@@ -12,7 +12,6 @@ import pytest
 from app import memory
 from app.retrieval.store import VectorStore
 
-
 # --- what gets captured ------------------------------------------------------
 
 

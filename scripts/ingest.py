@@ -2,9 +2,19 @@
 
     uv run python scripts/ingest.py                     # re-ingest the default docs
     uv run python scripts/ingest.py notes/ handbook.md  # ingest specific paths
+    uv run python scripts/ingest.py --vault             # the notes vault
     uv run python scripts/ingest.py --list              # what is indexed
     uv run python scripts/ingest.py --probe "who verifies answers here"
     uv run python scripts/ingest.py --rebuild           # drop everything first
+
+`--vault` is what closes the loop between the two ways this assistant remembers things.
+`app/tools/notes.py` writes notes when asked to; indexing them puts what it wrote into
+the same corpus as everything else, so recall no longer depends on the user phrasing a
+request in a way `app/tools/gate.py` recognises as a note operation. Measured before it
+existed: asked "when is the Q3 review" with a note saying the 14th, the gate matched
+nothing, no tool ran, and the model answered "next week" from nowhere. Explicit note
+operations stay with the tools; implicit recall belongs to retrieval, which is semantic
+and needs no pattern to match.
 
 `--probe` is the important one. The similarity threshold that decides whether retrieved
 text is injected at all cannot be guessed: bge-small puts unrelated English around 0.6
@@ -27,10 +37,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.backends.ollama import OllamaClient  # noqa: E402
-from app.config import get_registry, get_settings  # noqa: E402
-from app.retrieval.chunk import chunk_markdown  # noqa: E402
-from app.retrieval.store import VectorStore  # noqa: E402
+from app.backends.ollama import OllamaClient
+from app.config import get_registry, get_settings
+from app.retrieval.chunk import MIN_CHARS, NOTE_MIN_CHARS, chunk_markdown
+from app.retrieval.service import _normalize_query
+from app.retrieval.store import VectorStore
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -38,7 +49,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # knowledge the models could plausibly hold, which makes it an honest test of whether
 # retrieval works — unlike seeding the corpus with the answers to the factual eval cases,
 # which would measure nothing except that the harness can read a file.
-DEFAULT_SOURCES = ["README.md", "ROADMAP.md"]
+#
+# `docs/` carries most of it: the architecture, measurement and configuration pages are
+# where the substance moved when the README was cut down to an entry point. Ingesting
+# only README.md would index the summary and drop the material worth retrieving.
+DEFAULT_SOURCES = ["README.md", "ROADMAP.md", "docs/"]
 
 SUFFIXES = {".md", ".txt", ".markdown", ".rst"}
 
@@ -97,8 +112,21 @@ async def run(args: argparse.Namespace) -> int:
             if not len(store):
                 print("corpus is empty; nothing to probe", file=sys.stderr)
                 return 1
-            vectors = await client.embed(embed_spec, [args.probe])
-            print(f"\nprobe: {args.probe!r}   (threshold is "
+            # **Normalised exactly as the service normalises it.** This did not used to
+            # be, and the discrepancy pointed the wrong way at the worst possible moment:
+            # probing "what is the current gold price?" reported 0.626 against a README
+            # chunk, comfortably below the 0.66 cut-off, while the live request scored the
+            # same pair at roughly 0.68 and injected it. The whole difference was the
+            # trailing question mark, which app/retrieval/service.py strips and this did
+            # not — worth 0.057 cosine, per the measurement in `_normalize_query`.
+            #
+            # A calibration instrument that disagrees with the thing it calibrates is
+            # worse than none, because every threshold set with it is set from the wrong
+            # number.
+            query = _normalize_query(args.probe)
+            vectors = await client.embed(embed_spec, [query])
+            shown = f"{args.probe!r}" + (f" -> {query!r}" if query != args.probe else "")
+            print(f"\nprobe: {shown}   (threshold is "
                   f"{settings.retrieval_min_score}, {len(store)} chunks indexed)\n")
             for hit in store.search(vectors[0], args.top_k):
                 mark = "USED " if hit.score >= settings.retrieval_min_score else "below"
@@ -111,15 +139,29 @@ async def run(args: argparse.Namespace) -> int:
             store.clear()
             print("cleared existing index")
 
-        files = collect(args.paths or DEFAULT_SOURCES)
+        paths = list(args.paths)
+        if args.vault:
+            if settings.vault_path is None:
+                print("no vault configured; set LEGEND_VAULT_PATH", file=sys.stderr)
+                return 1
+            paths.append(str(settings.vault_path))
+
+        files = collect(paths or DEFAULT_SOURCES)
         if not files:
             print("nothing to ingest", file=sys.stderr)
             return 1
 
+        vault = settings.vault_path.resolve() if settings.vault_path else None
+
         total = 0
         for path in files:
             source = relative(path)
-            chunks = chunk_markdown(path.read_text(encoding="utf-8", errors="replace"))
+            # A note gets the lower floor; anything else keeps the document threshold.
+            in_vault = vault is not None and path.resolve().is_relative_to(vault)
+            chunks = chunk_markdown(
+                path.read_text(encoding="utf-8", errors="replace"),
+                min_chars=NOTE_MIN_CHARS if in_vault else MIN_CHARS,
+            )
             if not chunks:
                 print(f"  {source}: no chunks (too short?)")
                 continue
@@ -148,6 +190,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="*", help=f"files or dirs (default: {DEFAULT_SOURCES})")
+    ap.add_argument(
+        "--vault",
+        action="store_true",
+        help="ingest the notes vault named by LEGEND_VAULT_PATH",
+    )
     ap.add_argument("--rebuild", action="store_true", help="drop the whole index first")
     ap.add_argument("--list", action="store_true", help="show what is indexed")
     ap.add_argument("--probe", help="score a question against the corpus and exit")

@@ -14,15 +14,23 @@ import time
 import uuid
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app import adjudicate, effort, guardrails, memory
 from app.backends.ollama import OllamaError
-from app.persona import CORRECTION_NOTE, DISPUTE_NOTE, ensure_system_prompt
+from app.persona import (
+    CORRECTION_NOTE,
+    DISPUTE_NOTE,
+    TOOL_RESULT_NOTE,
+    ensure_system_prompt,
+)
 from app.retrieval import service as retrieval_service
 from app.router.engine import anchor_text, extract_text, has_images
 from app.router.types import RouteRequest
+from app.tools import dispatch
+from app.tools import gate as tools_gate
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -100,6 +108,75 @@ async def retrieval_status(request: Request) -> dict[str, Any]:
         "sources": store.sources,
         "min_score": settings.retrieval_min_score,
         "top_k": settings.retrieval_top_k,
+    }
+
+
+def web_health(status_code: int) -> str:
+    """What a status code from the SearXNG probe means for the console's health pill.
+
+    `400` is a pass, which is the whole point of the empty-query probe: SearXNG checks
+    the requested format *before* it checks that there is a query, so "No query" is
+    proof that `json` is allowed — reached without running a federated search.
+    """
+    if status_code == 403:
+        # The one config trap: SearXNG ships with only `html` in `search.formats`, and
+        # every JSON request 403s until it is added. See deploy/searxng/settings.yml.example.
+        return "no json format"
+    if status_code in (200, 400):
+        return "ok"
+    return f"http {status_code}"
+
+
+@router.get("/tools/status")
+async def tools_status(request: Request) -> dict[str, Any]:
+    """Which tools exist and whether their backing services actually answer.
+
+    Reachability is probed rather than assumed. A tool whose backend is down is not an
+    error until someone asks a question that needs it, at which point it is a slow failure
+    inside a request the user is waiting on — and from the console it would otherwise look
+    identical to a tool that simply never fires.
+    """
+    settings = request.app.state.settings
+    registry = getattr(request.app.state, "tools", None)
+    if registry is None or not settings.tools_enabled:
+        return {"enabled": False, "families": [], "tools": []}
+
+    enabled = set(settings.tool_families)
+    listed = registry.for_families(enabled)
+
+    health: dict[str, Any] = {}
+    if "web" in enabled:
+        # **An empty query, deliberately.** This used to search for "ping", which made
+        # every page load fire a real federated search: 2.6 s against 11 ms, an outbound
+        # request to every configured engine, and a false `unreachable` whenever a cold
+        # SearXNG took longer than the timeout — which it does, so the console showed a
+        # red WEB pill for a backend that was fine. A health light that cries wolf is
+        # worse than none, because it trains the eye to skip the row it lives in.
+        #
+        # `q=` still passes through the format gate before the "no query" check, so one
+        # cheap request separates all three states that matter:
+        #   400  up, and `json` is in search.formats
+        #   403  up, but search.formats is missing json — the config trap in
+        #        deploy/searxng/settings.yml.example, still caught
+        #   —    connection refused: not up
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as probe:
+                resp = await probe.get(
+                    f"{settings.searxng_url}/search", params={"q": "", "format": "json"}
+                )
+            health["web"] = web_health(resp.status_code)
+        except Exception:
+            health["web"] = "unreachable"
+    if "notes" in enabled:
+        vault = settings.vault_path
+        health["notes"] = "ok" if (vault and vault.is_dir()) else "no vault"
+
+    return {
+        "enabled": True,
+        "families": sorted({t.family for t in listed}),
+        "tools": sorted(t.name for t in listed),
+        "dispatcher": settings.tool_dispatcher_alias,
+        "health": health,
     }
 
 
@@ -297,10 +374,76 @@ async def chat_completions(request: Request) -> Any:
             )
     decision.effort = plan.as_meta()
 
+    # --- tools ---------------------------------------------------------------
+    #
+    # After grounding and retrieval, and before the prompt is assembled. The ordering is
+    # not arbitrary: a guardrail has already computed an exact answer when `grounding` is
+    # set, and a tool could then only disagree with it, so the gate is told to stay shut.
+    #
+    # The dispatcher is a *different model* from the one that answers, and the answering
+    # model never sees a tool schema. Both of those are measured — see app/tools/gate.py
+    # for the table, and app/tools/dispatch.py for why the split exists at all.
+    tool_run = None
+    tool_registry = getattr(request.app.state, "tools", None)
+    if tool_registry is not None and settings.tools_enabled:
+        families = tools_gate.wanted(
+            req.text,
+            enabled=set(settings.tool_families),
+            grounded=grounding is not None,
+        )
+        if families:
+            dispatcher = engine.registry.get(settings.tool_dispatcher_alias)
+            if dispatcher is not None:
+                tool_run = await dispatch.run(
+                    text=req.text,
+                    registry=tool_registry,
+                    families=families,
+                    dispatcher_spec=dispatcher,
+                    client=client,
+                    # "then search it in the web" has no subject in it. `anchor_text` is
+                    # the last user turn that was not itself a follow-up, which is what
+                    # "it" refers to; without it the dispatcher searched for "latest news"
+                    # and returned CNN links to a question about the weather.
+                    context=req.anchor_text if dispatch.needs_context(req.text) else "",
+                )
+                decision.tools = tool_run.as_meta()
+
+                # A tool result is retrieved text by another name, so it gets the same
+                # escalation retrieval gets, for the same measured reason: the 350M cannot
+                # be trusted to read a passage. Observed live — "so search the gold price"
+                # routed to `trivial`, which would have left the 350M summarising search
+                # results. Only off the router tier; the 1.2B tiers read fine.
+                reader = engine.spec_for_route(settings.reader_route)
+                if tool_run.ran and reader is not None and spec.alias == settings.router_alias:
+                    log.info(
+                        "tool result (%s); escalating %s -> %s to read it",
+                        ", ".join(r.name for r in tool_run.results), spec.alias, reader.alias,
+                    )
+                    spec = reader
+                    decision.model = reader.alias
+                    decision.reason = (
+                        f"{decision.reason}; escalated to {reader.alias} to read tool output"
+                    )
+                    plan = effort.estimate(
+                        decision,
+                        text=req.text,
+                        tier_max_tokens=spec.default_max_tokens,
+                        grounded=grounding is not None,
+                        override=str(body.get("effort") or settings.default_effort),
+                        retrieval_text=retrieval_query,
+                        thinking=spec.thinking,
+                    )
+                    decision.effort = plan.as_meta()
+
     # Routing (`req`) was computed from the caller's original messages above; the
     # persona system prompt is added only for generation, so it never influences
     # which tier gets picked.
-    chat_messages = ensure_system_prompt(messages, settings.assistant_name, spec.persona)
+    chat_messages = ensure_system_prompt(
+        messages,
+        settings.assistant_name,
+        spec.persona,
+        capabilities=settings.persona_capabilities,
+    )
 
     if grounding is not None:
         chat_messages = _append_system(chat_messages, guardrails.as_system_note(grounding))
@@ -312,6 +455,13 @@ async def chat_completions(request: Request) -> Any:
         chat_messages = _append_system(chat_messages, DISPUTE_NOTE)
     elif decision.followup == "correction":
         chat_messages = _append_system(chat_messages, CORRECTION_NOTE)
+
+    if tool_run is not None and tool_run.ran:
+        # The results go on as `role: "tool"` turns, and the note goes on the system
+        # prompt. The note is not an explanation of the mechanism — it is there because
+        # the model refuses otherwise, answering "I don't have real-time capabilities" to
+        # a clock reading it was just handed. See app/persona.py for the measurement.
+        chat_messages = _append_system(chat_messages, TOOL_RESULT_NOTE) + tool_run.messages
 
     options = _openai_options(body, plan.max_tokens)
 

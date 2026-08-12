@@ -1,0 +1,63 @@
+name: Bug report
+description: Something behaves differently than documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: a bad *answer* from a small model is often not a bug — it is a
+        capability limit, and `docs/measurements.md` lists the ones already known and
+        measured. What is always a bug is the router sending a request somewhere it
+        should not have gone.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: route
+    attributes:
+      label: The routing decision
+      description: |
+        **This is the most useful thing you can include.** Every response carries an
+        `x_legend_route` field in the body and an `X-Legend-Route` response header saying
+        which model answered, which stage decided, why, and which guardrail fired.
+
+        "It gave a bad answer" and "it gave a bad answer *and routed to the 350M*" are
+        different bugs with different fixes.
+      render: json
+    validations:
+      required: false
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: |
+        The exact request, ideally as curl. If it only happens sometimes, say roughly how
+        often — these models are sampled, and a 1-in-6 failure looks like a pass at two
+        samples.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: install
+    attributes:
+      label: How are you running it
+      placeholder: "docker compose / host + uv, and the Ollama version"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server log
+      description: The lines around the request. Warnings about empty content or exhausted budgets matter.
+      render: shell
+    validations:
+      required: false

@@ -18,8 +18,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import ModelSpec, get_registry  # noqa: E402
-from app.resolve import resolve, resolve_mmproj  # noqa: E402
+from app.config import ModelSpec, get_registry
+from app.resolve import resolve, resolve_mmproj
 
 log = logging.getLogger("import")
 
@@ -59,7 +59,7 @@ def import_one(spec: ModelSpec, *, force: bool, allow_download: bool, tags: set[
 
     try:
         weights = resolve(spec, allow_download=allow_download)
-    except Exception as exc:  # noqa: BLE001 - report and keep going with other models
+    except Exception as exc:
         log.error("%s: download failed: %s", spec.alias, exc)
         return "failed"
 
