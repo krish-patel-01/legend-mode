@@ -108,15 +108,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import frames  # noqa: E402
-import functiongemma as fg  # noqa: E402
-import httpx  # noqa: E402
+import frames
+import functiongemma as fg
+import httpx
 
-from app.backends.ollama import OllamaClient, OllamaError  # noqa: E402
-from app.config import ModelSpec, get_registry, get_settings  # noqa: E402
-from app.persona import TOOL_RESULT_NOTE  # noqa: E402
-from app.tools.dispatch import _parse_calls  # noqa: E402
-from app.tools.registry import build_registry  # noqa: E402
+from app.backends.ollama import OllamaClient, OllamaError
+from app.config import ModelSpec, get_registry, get_settings
+from app.persona import TOOL_RESULT_NOTE
+from app.tools.dispatch import _parse_calls
+from app.tools.registry import build_registry
 
 FIXTURE = Path(__file__).resolve().parent.parent / "evals" / "tool_context.json"
 

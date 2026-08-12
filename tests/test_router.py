@@ -10,14 +10,17 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.config import ModelRegistry, ModelSpec, RouteTable, Settings, load_models, load_routes
+from app.config import (
+    ROOT,
+    ModelRegistry,
+    RouteTable,
+    Settings,
+    load_models,
+    load_routes,
+)
 from app.router import rules
-from app.router.classifier import LlmClassifier
-from app.router.embed import EmbeddingRouter
 from app.router.engine import RouterEngine, anchor_text, extract_text, has_images
 from app.router.types import RouteRequest
-from app.config import ROOT
-
 
 VOCAB_DIM = 64
 

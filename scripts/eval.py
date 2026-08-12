@@ -332,7 +332,7 @@ def main() -> int:
 
     try:
         runner._client.get("/v1/models").raise_for_status()
-    except Exception as exc:  # noqa: BLE001 - a missing server is the common mistake
+    except Exception as exc:
         print(f"cannot reach {args.base_url}: {exc}\n"
               f"start it with: uv run uvicorn app.main:app --port 8000", file=sys.stderr)
         return 2

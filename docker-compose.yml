@@ -1,0 +1,119 @@
+# Legend Mode, wired up: the router, the Ollama daemon it drives, and optionally the
+# SearXNG instance behind the `web` tool family.
+#
+#   docker compose up -d --build                    router + ollama
+#   docker compose run --rm router \
+#       python scripts/import_models.py             import the models (once, ~1 GB)
+#   docker compose --profile tools up -d            ...and SearXNG for web search
+#
+# Then open http://127.0.0.1:8000.
+#
+# **Every published port is bound to 127.0.0.1 on purpose.** This service has no
+# authentication, no rate limiting and no CORS policy -- it is an OpenAI-compatible
+# endpoint that will run inference for anyone who can reach it. Putting it on 0.0.0.0
+# publishes an unauthenticated LLM to your network. If you need that, terminate TLS and
+# authenticate in a reverse proxy in front of it; do not just widen the binding here.
+
+name: legend-mode
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: legend-ollama
+    restart: unless-stopped
+    ports:
+      # Loopback only. Exposed at all so host-side tooling (`ollama list`, the import
+      # script run outside compose) can reach the same daemon the router uses.
+      - "127.0.0.1:11434:11434"
+    volumes:
+      # The weights. This is the volume worth backing up -- it is gigabytes, and
+      # re-importing means re-downloading everything.
+      - ollama-models:/root/.ollama
+    environment:
+      # One slot per tier. **This can only be set on the daemon**, which is why it is
+      # here and not in the router's environment: nothing in the router process can
+      # change a running Ollama's residency cap. Measured to make no difference to
+      # throughput on constrained hardware; lower it if RAM is tight.
+      OLLAMA_MAX_LOADED_MODELS: "4"
+    healthcheck:
+      # The image ships the ollama binary and little else, so probe with it rather
+      # than assuming curl exists.
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  router:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: legend-mode:latest
+    container_name: legend-router
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        # Waiting for healthy rather than started: the router warms the pinned tier
+        # during startup, and against a daemon that is merely running it logs a
+        # connection error and serves degraded until the first retry.
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # Service names, not localhost -- inside the network each container's own
+      # loopback is itself.
+      # Service names, not localhost -- inside the network each container's own
+      # loopback is itself.
+      LEGEND_OLLAMA_HOST: "http://ollama:11434"
+      LEGEND_SEARXNG_URL: "http://searxng:8080"
+      LEGEND_RETRIEVAL_DB: "/app/data/corpus.db"
+
+      # **Overrides whatever .env says, deliberately.** Every path setting in .env is a
+      # path on the *host* and means nothing in here -- a vault at K:/vault or
+      # /home/you/vault does not exist in this filesystem, and the `notes` family would
+      # quietly report itself unavailable rather than fail in any visible way. The host
+      # value is used below as the mount source instead. `environment` takes precedence
+      # over `env_file`, which is what makes this work.
+      LEGEND_VAULT_PATH: "/vault"
+    env_file:
+      # Machine-specific settings and anything you would rather not put in this file.
+      # Optional: an absent .env is not an error, and every setting has a default.
+      # Portable settings (thresholds, aliases, booleans) come through as-is; the paths
+      # above are re-pointed at container paths.
+      - path: .env
+        required: false
+    volumes:
+      # The retrieval index, so an ingested corpus survives a rebuild. Populate with:
+      #   docker compose run --rm router python scripts/ingest.py
+      - corpus:/app/data
+
+      # The Obsidian vault for the `notes` family. LEGEND_VAULT_PATH in .env is read
+      # here as the *host* directory to mount; inside the container it is always /vault.
+      # Falls back to an empty directory in the repo so that `docker compose up` works
+      # with no .env at all -- an unset vault is a working state, and the family simply
+      # reports itself unavailable.
+      - ${LEGEND_VAULT_PATH:-./deploy/empty-vault}:/vault
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: legend-searxng
+    restart: unless-stopped
+    # Behind a profile so a plain `docker compose up` does not require the generated
+    # settings file to exist. Start it with: docker compose --profile tools up -d
+    profiles: ["tools"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # **Generate this first**, with deploy/searxng/up.sh or by copying the example
+      # and substituting a key. If the path does not exist Docker silently creates a
+      # *directory* there, SearXNG falls back to its shipped defaults, and every JSON
+      # request 403s while the container reports itself healthy -- which is
+      # indistinguishable from a config mistake. The file must exist before this starts.
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      INSTANCE_NAME: legend-mode
+      BASE_URL: "http://127.0.0.1:8080/"
+
+volumes:
+  ollama-models:
+  corpus:

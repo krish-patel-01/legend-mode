@@ -149,7 +149,7 @@ class ToolRegistry:
             text, ok = f"Bad arguments for {name}: {exc}", False
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - see docstring
+        except Exception as exc:
             log.warning("tool %s failed: %s", name, exc)
             text, ok = f"{type(exc).__name__}: {exc}", False
 
@@ -187,7 +187,11 @@ def build_registry(settings: Any = None, memory: Any = None) -> ToolRegistry:
     # vault is set up" and it silently having no idea notes exist.
     from app.tools import notes
 
-    for tool in notes.tools(notes.NotesConfig(getattr(settings, "vault_path", None))):
+    notes_config = notes.NotesConfig(
+        getattr(settings, "vault_path", None),
+        getattr(settings, "assistant_name", None),
+    )
+    for tool in notes.tools(notes_config):
         registry.add(tool)
 
     return registry

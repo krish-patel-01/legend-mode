@@ -1,8 +1,9 @@
 """System prompt shared across every tier.
 
 Kept separate from any one model's config since it's about the assistant's identity
-and behavior, not a particular tier's sampling settings. No name is hardcoded — one
-hasn't been picked yet — so the prompt says so rather than inventing one.
+and behavior, not a particular tier's sampling settings. The name comes from
+`LEGEND_ASSISTANT_NAME` (default `Lucy`); with it unset the prompt tells the model to
+say it has no name rather than invent one, and both wordings are measured below.
 
 Three things here were settled by measurement against the actual models, not by
 guessing, and the wording should not be "tidied" without re-running that check

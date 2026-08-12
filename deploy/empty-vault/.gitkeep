@@ -1,0 +1,7 @@
+Placeholder so docker-compose.yml has a vault directory to mount when LEGEND_VAULT_PATH
+is unset. Docker silently creates a *directory* at a missing bind-mount source, and an
+accidental directory where a file was expected is how the SearXNG config broke once
+already -- see deploy/searxng/up.sh. Keeping a real, committed directory here avoids
+relying on that behaviour.
+
+The `notes` tool family treats an empty vault as unavailable, which is a working state.

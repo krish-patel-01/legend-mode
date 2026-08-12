@@ -37,11 +37,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.backends.ollama import OllamaClient  # noqa: E402
-from app.config import get_registry, get_settings  # noqa: E402
-from app.retrieval.chunk import MIN_CHARS, NOTE_MIN_CHARS, chunk_markdown  # noqa: E402
-from app.retrieval.service import _normalize_query  # noqa: E402
-from app.retrieval.store import VectorStore  # noqa: E402
+from app.backends.ollama import OllamaClient
+from app.config import get_registry, get_settings
+from app.retrieval.chunk import MIN_CHARS, NOTE_MIN_CHARS, chunk_markdown
+from app.retrieval.service import _normalize_query
+from app.retrieval.store import VectorStore
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -49,7 +49,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # knowledge the models could plausibly hold, which makes it an honest test of whether
 # retrieval works — unlike seeding the corpus with the answers to the factual eval cases,
 # which would measure nothing except that the harness can read a file.
-DEFAULT_SOURCES = ["README.md", "ROADMAP.md"]
+#
+# `docs/` carries most of it: the architecture, measurement and configuration pages are
+# where the substance moved when the README was cut down to an entry point. Ingesting
+# only README.md would index the summary and drop the material worth retrieving.
+DEFAULT_SOURCES = ["README.md", "ROADMAP.md", "docs/"]
 
 SUFFIXES = {".md", ".txt", ".markdown", ".rst"}
 

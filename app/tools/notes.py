@@ -21,7 +21,7 @@ This is deliberately separate from `app/memory.py`. That captures facts in passi
 regex, from ordinary conversation. This writes when the user *asks* for something to be
 written, and produces a document they can open, edit and link. The vault can also be fed
 to `scripts/ingest.py`, which puts these notes into the same retrieval corpus as anything
-else — so what Lucy writes becomes what Lucy can later recall.
+else — so what the assistant writes becomes what it can later recall.
 """
 
 from __future__ import annotations
@@ -51,6 +51,10 @@ _RESERVED = {
 }
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WHITESPACE = re.compile(r"\s+")
+
+# The frontmatter value is unquoted YAML, so a name containing `:` or a newline would
+# produce a file Obsidian cannot parse. Anything outside this set collapses to a hyphen.
+_SOURCE_SAFE = re.compile(r"[^a-z0-9_-]+")
 
 
 def slugify(title: str) -> str | None:
@@ -89,8 +93,25 @@ def _resolve(root: Path, title: str) -> Path | None:
 
 
 class NotesConfig:
-    def __init__(self, vault: Path | str | None) -> None:
+    def __init__(self, vault: Path | str | None, assistant_name: str | None = None) -> None:
         self.vault = Path(vault).expanduser() if vault else None
+        self.assistant_name = assistant_name
+
+    @property
+    def source_tag(self) -> str:
+        """What `source:` says in a new note's frontmatter.
+
+        Derived from the assistant's name rather than written as a literal, so renaming
+        the assistant follows through into what it writes. It was a hardcoded `lucy` for
+        a while, which meant `LEGEND_ASSISTANT_NAME=Ada` produced notes still stamped
+        with the old name -- and this tag is what tells the user which notes were written
+        by the assistant rather than by them.
+
+        Falls back to a generic tag rather than to a name, since an unnamed persona
+        deliberately has none to use.
+        """
+        name = (self.assistant_name or "").strip().lower()
+        return _SOURCE_SAFE.sub("-", name).strip("-") or "assistant"
 
 
 def _unavailable(config: NotesConfig) -> str | None:
@@ -180,7 +201,7 @@ def write_note(title: str, content: str, config: NotesConfig, request: str = "")
     front = (
         "---\n"
         f"created: {stamp:%Y-%m-%d %H:%M}\n"
-        "source: lucy\n"
+        f"source: {config.source_tag}\n"
         "---\n\n"
     )
     path.write_text(f"{front}# {path.stem}\n\n{content}\n", encoding="utf-8")

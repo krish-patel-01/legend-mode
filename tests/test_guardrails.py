@@ -11,7 +11,6 @@ import pytest
 
 from app.guardrails import Grounding, contradicts, fmt, ground, safe_eval
 
-
 # --- safe evaluation ----------------------------------------------------------------
 
 

@@ -116,9 +116,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.adjudicate import operative_number  # noqa: E402
-from app.backends.ollama import OllamaClient, OllamaError  # noqa: E402
-from app.config import get_registry, get_settings  # noqa: E402
+from app.adjudicate import operative_number
+from app.backends.ollama import OllamaClient, OllamaError
+from app.config import get_registry, get_settings
 
 # --- the questions -------------------------------------------------------------
 #
