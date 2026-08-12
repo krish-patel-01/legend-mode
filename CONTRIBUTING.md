@@ -4,7 +4,7 @@
 
 ```bash
 uv sync                                    # dependencies, from the lockfile
-uv run pytest                              # 478 tests, ~6s, no Ollama needed
+uv run pytest                              # 487 tests, ~6s, no Ollama needed
 ```
 
 The test suite runs the router cascade against a stub backend. No models load, nothing
