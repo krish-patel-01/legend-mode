@@ -305,9 +305,14 @@ worth doing on its own, since it is how a misroute gets found at all — and the
 two thresholds (`min_score`, `min_margin`) rather than a full policy. Two numbers need far
 less evidence than a policy over embeddings.
 
-**Tool execution.** `tools` is forwarded and `tool_calls` returned untouched; no tier
-advertises tool support. `app/router/engine.py` documents the extension point. Deliberately
-after routing is trustworthy.
+**Tool execution — now built.** `app/tools/` dispatches server-side across three families
+(`basics`, `web`, `notes`), behind a gate, with the tool *picked* by a different model than
+the one that answers. That split is not an optimisation: attaching tool schemas measurably
+degrades every model here, to the point where the 1.2B instruct refused to name the capital
+of France. See the table in `app/tools/gate.py` and
+[docs/architecture.md](docs/architecture.md#tools).
+
+What remains is breadth — more families — rather than mechanism.
 
 **Vision.** Parked with the Qwen3.5-0.8B tier; image requests return 422.
 

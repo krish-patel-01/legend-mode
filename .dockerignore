@@ -1,0 +1,41 @@
+# Everything the image does not need. Keeping this tight matters more than usual here:
+# models/ and data/ can be gigabytes, and sending them to the build daemon as context
+# would dominate the build time for files the image never uses.
+
+.git
+.gitignore
+.gitattributes
+
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Local machine configuration. Never bake secrets or machine-specific paths into an
+# image -- compose passes them in as environment at run time.
+.env
+
+# GGUF weights and the retrieval index. Both are runtime state living on volumes:
+# models are pulled into Ollama's volume by scripts/import_models.py, and the corpus
+# is built by scripts/ingest.py. Baking either in would produce a multi-gigabyte
+# image that is stale the moment it is built.
+models/
+data/
+
+# Generated locally with a machine-specific secret key; compose mounts it instead.
+deploy/searxng/settings.yml
+
+# Docs and development scaffolding. None of it is imported at run time.
+docs/
+evals/
+tests/
+README.md
+ROADMAP.md
+CONTRIBUTING.md
+SECURITY.md
+LICENSE
+.github/
+Dockerfile
+docker-compose.yml
+.dockerignore

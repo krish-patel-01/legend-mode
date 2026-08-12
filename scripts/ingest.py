@@ -49,7 +49,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # knowledge the models could plausibly hold, which makes it an honest test of whether
 # retrieval works — unlike seeding the corpus with the answers to the factual eval cases,
 # which would measure nothing except that the harness can read a file.
-DEFAULT_SOURCES = ["README.md", "ROADMAP.md"]
+#
+# `docs/` carries most of it: the architecture, measurement and configuration pages are
+# where the substance moved when the README was cut down to an entry point. Ingesting
+# only README.md would index the summary and drop the material worth retrieving.
+DEFAULT_SOURCES = ["README.md", "ROADMAP.md", "docs/"]
 
 SUFFIXES = {".md", ".txt", ".markdown", ".rst"}
 
