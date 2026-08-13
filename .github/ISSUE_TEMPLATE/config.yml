@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/krish-patel-01/legend-mode/security/advisories/new
     about: Report privately rather than in a public issue. See SECURITY.md.
   - name: What is planned, and what was ruled out
-    url: https://github.com/krish-patel-01/legend-mode/blob/master/ROADMAP.md
+    url: https://github.com/krish-patel-01/legend-mode/blob/main/ROADMAP.md
     about: Several attractive ideas are already recorded there as measured-and-rejected.
