@@ -4,7 +4,7 @@ The goal is accuracy on this laptop that stands up against a single 10–15B mod
 path is architectural, not more parameters: nothing here proposes a bigger model, because
 nothing bigger fits.
 
-Steps 1 through 4 are built and on `two-model-guardrails`. Each is marked DONE below with
+Steps 1 through 4 are built and merged to `main`. Each is marked DONE below with
 what it actually became, since three of the four changed shape once measured. What is
 left is tuning — the defaults below are each a switch with a measurement behind it, and
 the eval harness now reports the cost side of every one of them.

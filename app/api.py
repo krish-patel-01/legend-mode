@@ -16,7 +16,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app import adjudicate, effort, guardrails, memory
 from app.backends.ollama import OllamaError
@@ -663,24 +663,40 @@ def _route_header(decision) -> str:
 
 def _to_openai_response(
     result: dict[str, Any], model_tag: str, completion_id: str, decision
-) -> dict[str, Any]:
+) -> JSONResponse:
+    """Wrap a finished answer, carrying the route in both the body and the header.
+
+    Returns a response object rather than a plain dict purely so `X-Legend-Route` can be
+    attached. The streaming paths have always sent it; this one had not, so a client that
+    did not ask for SSE got `x_legend_route` in the body only — while the README promised
+    the header on every reply. The web console streams, which is why the gap went unseen.
+
+    Every non-streaming return in this module goes through here, including the memory
+    shortcut that answers without generating, so setting it once covers all of them.
+    Everything in the body is JSON-native (see RouteDecision.as_meta), so serialising it
+    directly rather than through FastAPI's encoder loses nothing.
+    """
     message = result.get("message", {"role": "assistant", "content": ""})
     finish_reason = "tool_calls" if message.get("tool_calls") else "stop"
-    return {
-        "id": completion_id,
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": model_tag,
-        "choices": [
-            {"index": 0, "message": message, "finish_reason": finish_reason}
-        ],
-        "usage": {
-            "prompt_tokens": result.get("prompt_eval_count", 0),
-            "completion_tokens": result.get("eval_count", 0),
-            "total_tokens": result.get("prompt_eval_count", 0) + result.get("eval_count", 0),
+    return JSONResponse(
+        content={
+            "id": completion_id,
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model_tag,
+            "choices": [
+                {"index": 0, "message": message, "finish_reason": finish_reason}
+            ],
+            "usage": {
+                "prompt_tokens": result.get("prompt_eval_count", 0),
+                "completion_tokens": result.get("eval_count", 0),
+                "total_tokens": result.get("prompt_eval_count", 0)
+                + result.get("eval_count", 0),
+            },
+            "x_legend_route": decision.as_meta(),
         },
-        "x_legend_route": decision.as_meta(),
-    }
+        headers={"X-Legend-Route": _route_header(decision)},
+    )
 
 
 async def _stream_prepared(
