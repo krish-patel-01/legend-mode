@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
   # Lets a broken build be re-run from the Actions tab without an empty commit.
   workflow_dispatch:
