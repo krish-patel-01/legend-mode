@@ -199,3 +199,131 @@ def test_the_json_format_trap_is_still_caught() -> None:
 def test_an_unexpected_status_is_reported_verbatim() -> None:
     """Not silently healthy — an unknown code is news, and guessing at it hides it."""
     assert api.web_health(502) == "http 502"
+
+
+# --- the direct-answer block ---------------------------------------------------
+#
+# `_summarise` reads the two fields SearXNG uses to carry a fact rather than a page, and
+# `search` was previously dropping both. The infobox below is the real response for
+# "capital of Nigeria" from the wikipedia engine, trimmed; its shape matters, because
+# `title` is present and empty there while the name sits under `infobox`.
+
+
+def _infobox_payload() -> dict:
+    return {
+        "results": [
+            {"title": "Abuja - Wikipedia", "url": "https://en.wikipedia.org/wiki/Abuja",
+             "content": "Abuja is the capital of Nigeria."},
+        ],
+        "infoboxes": [
+            {
+                "infobox": "Abuja",
+                "title": "",
+                "engine": "wikipedia",
+                "id": "https://en.wikipedia.org/wiki/Abuja",
+                "content": "Abuja is the capital city of Nigeria, situated at the "
+                           "geographic midpoint of the country.",
+                "attributes": [{"label": "Population", "value": "3,652,000"}],
+            }
+        ],
+        "answers": [],
+    }
+
+
+def test_an_infobox_becomes_a_labelled_summary() -> None:
+    summary = web._summarise(_infobox_payload())
+    assert summary is not None
+    assert "Summary of Abuja (from wikipedia)" in summary
+    assert "capital city of Nigeria" in summary
+    assert "Population: 3,652,000" in summary
+    assert "source: https://en.wikipedia.org/wiki/Abuja" in summary
+
+
+def test_the_subject_name_is_read_from_infobox_not_title() -> None:
+    """The wikipedia engine sends `title: ""`, so reading it first labels everything "".""" 
+    payload = _infobox_payload()
+    assert payload["infoboxes"][0]["title"] == ""
+    assert "Summary of Abuja" in (web._summarise(payload) or "")
+
+
+def test_a_plain_string_answer_is_read() -> None:
+    """Plugins hand back a bare string. Synthetic: no plugin on this instance emits one
+    (see `_summarise`), so this pins the contract rather than reproducing an observation."""
+    assert "Direct answer: 12" in (web._summarise({"answers": ["12"]}) or "")
+
+
+def test_an_object_answer_is_read_too() -> None:
+    summary = web._summarise({"answers": [{"answer": "1.428 billion", "url": "x"}]})
+    assert "Direct answer: 1.428 billion" in (summary or "")
+
+
+def test_a_response_with_no_direct_answer_summarises_to_nothing() -> None:
+    """"last f1 race" is this case: 39 results, no infobox, no answer. The caller has to
+    get None back so it falls through to the ranked list unchanged."""
+    assert web._summarise({"results": [{"title": "F1"}], "answers": [], "infoboxes": []}) is None
+
+
+def test_an_empty_infobox_content_is_not_reported_as_a_summary() -> None:
+    assert web._summarise({"infoboxes": [{"infobox": "X", "content": ""}]}) is None
+
+
+def test_a_long_infobox_is_capped() -> None:
+    summary = web._summarise({"infoboxes": [{"infobox": "X", "content": "y" * 5000}]})
+    assert summary is not None and "y" * web.MAX_SUMMARY_CHARS in summary
+    assert "y" * (web.MAX_SUMMARY_CHARS + 1) not in summary
+
+
+# --- how search() composes the two halves --------------------------------------
+
+
+def _stub_searxng(monkeypatch, payload: dict) -> None:
+    """Answer any SearXNG request with `payload`, without a socket.
+
+    A MockTransport rather than a patched `search`: it exercises the real status-code
+    and JSON handling above the part under test, so a change there cannot pass silently.
+    """
+    import httpx
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    original = httpx.AsyncClient
+
+    def _client(*args, **kwargs):
+        kwargs["transport"] = transport
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _client)
+
+
+async def test_the_summary_is_placed_above_the_ranked_results(monkeypatch) -> None:
+    """Order is the point. On a 1.2B, what comes first in the context is not neutral, and
+    the answer arriving after five navigational links is the case that reads badly."""
+    _stub_searxng(monkeypatch, _infobox_payload())
+
+    out = await web.search("capital of Nigeria")
+    assert out.index("Summary of Abuja") < out.index("1. Abuja - Wikipedia")
+
+
+async def test_a_direct_answer_survives_an_empty_result_list(monkeypatch) -> None:
+    """This used to return "No results" and throw the answer away."""
+    _stub_searxng(monkeypatch, {"results": [], "answers": ["42"], "infoboxes": []})
+
+    out = await web.search("the answer")
+    assert "Direct answer: 42" in out
+    assert "No results" not in out
+
+
+async def test_a_search_with_no_direct_answer_is_unchanged(monkeypatch) -> None:
+    """The "last f1 race" shape. Nothing is added, so the existing behaviour is intact."""
+    _stub_searxng(
+        monkeypatch,
+        {"results": [{"title": "F1", "url": "https://formula1.com", "content": "Home"}],
+         "answers": [], "infoboxes": []},
+    )
+
+    out = await web.search("last f1 race")
+    assert out == "Search results for 'last f1 race':\n\n1. F1\n   https://formula1.com\n   Home"
+
+
+async def test_a_genuinely_empty_response_still_says_so(monkeypatch) -> None:
+    _stub_searxng(monkeypatch, {"results": [], "answers": [], "infoboxes": []})
+    assert "No results for 'nothing at all'" in await web.search("nothing at all")
