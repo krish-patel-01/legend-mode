@@ -213,9 +213,17 @@ def check(reply: str, meta: dict[str, Any], expect: dict[str, Any]) -> list[str]
 
 
 class Runner:
-    def __init__(self, base_url: str, routes_only: bool, timeout: float) -> None:
+    def __init__(
+        self, base_url: str, routes_only: bool, timeout: float, model: str = "auto"
+    ) -> None:
         self._client = httpx.Client(base_url=base_url, timeout=timeout)
         self._routes_only = routes_only
+        # "auto" is the real system: the router picks a tier per request. Pinning a
+        # single alias instead is how one model is compared against another on identical
+        # cases — the routing decision is held constant so the difference in score is the
+        # model. Route expectations become meaningless under a pin, which is why
+        # `--model` refuses to run alongside `--routes-only`.
+        self._model = model
         self.retries = 0
 
     def close(self) -> None:
@@ -232,7 +240,7 @@ class Runner:
         # inflate a score.
         for attempt in (1, 2):
             resp = self._client.post(
-                "/v1/chat/completions", json={"model": "auto", "messages": messages}
+                "/v1/chat/completions", json={"model": self._model, "messages": messages}
             )
             if resp.status_code < 500:
                 break
@@ -325,10 +333,23 @@ def main() -> int:
     ap.add_argument("--save-baseline", action="store_true",
                     help="write the current scores to evals/baseline.json")
     ap.add_argument("--verbose", "-v", action="store_true", help="print every sample")
+    ap.add_argument("--model", default="auto",
+                    help="pin one alias (e.g. legend/instruct-q3) instead of routing, "
+                         "to compare models on identical cases")
     args = ap.parse_args()
 
+    if args.model != "auto":
+        if args.routes_only:
+            ap.error("--model pins the model, so there is no routing left to check; "
+                     "drop --routes-only")
+        if args.save_baseline:
+            # The baseline describes the routed system. Overwriting it with one pinned
+            # model's scores would silently redefine what every later run is compared to.
+            ap.error("--save-baseline records the routed system's scores; refusing to "
+                     "overwrite it with a single pinned model")
+
     cases = load_cases(CASES, args.category, args.case)
-    runner = Runner(args.base_url, args.routes_only, args.timeout)
+    runner = Runner(args.base_url, args.routes_only, args.timeout, args.model)
 
     try:
         runner._client.get("/v1/models").raise_for_status()
