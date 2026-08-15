@@ -7,21 +7,32 @@ They are not comparable to the 2026-08-09 run below — `figures()` was wrong in
 directions then, and two of the five cases were unscorable. The `pick` rows are carried
 over unchanged; that job was a clean loss and nothing since has touched it.
 
+Two `read` runs are shown, an hour apart on the same frozen fixture, because the gap
+between them is the most useful thing here. Run B additionally fixes `_REFUSAL`, which
+could only ever move a score down.
+
     job   arm                 correct   decode   tok/q   refused
     pick  350M                  6/10      0.3s     21              greedy, 1 sample
     pick  functiongemma         0/10      0.4s     25
-    read  1.2B/tool            14/20      1.2s     48     5/20     t=0.6, 4 samples
-    read  1.2B/assistant       11/20      1.1s     45     0/20
-    read  1.2B/prefill         12/20      0.8s     30     0/20
-    read  functiongemma        16/20      1.2s     90     0/20
+    read  1.2B/tool          14 -> 12/20   1.4s     48   5 -> 6     t=0.6, 4 samples
+    read  1.2B/assistant     11 -> 15/20   1.3s     44   0 -> 0
+    read  1.2B/prefill       12 -> 12/20   0.9s     32   0 -> 0
+    read  functiongemma      16 -> 16/20   1.4s     90   0 -> 0
 
-**FunctionGemma now tops the table and still should not be adopted**, which is exactly why
-the instruction below to read the replies rather than the score is not a formality. All
-four of its wins on `weather` and `gold` open "Here are a few things to know: 1. Gold Price
-Today | Gold Spot Price Charts | APMEX...". It is reciting the search results back. The
-scorer asks for a shared figure and no refusal phrase, and recitation satisfies both
-without answering anything. Its `time` reply — "The time today is 17:27:41 UTC" — relabels
-JST as UTC, the same defect as last time, and scores correct.
+**`1.2B/assistant` moved 11/20 to 15/20 with zero refusals in both runs**, so nothing in the
+scorer fix touched it. That is four points of run-to-run noise on a 20-observation arm, and
+it is larger than most of the gaps this table gets read for. Treat the three `1.2B/*` rows
+as indistinguishable at this sample size, and do not conclude anything from a single run —
+scripts/cot_bench.py and app/persona.py both now carry the same warning from separate
+measurements taken the same day.
+
+**FunctionGemma tops the table in both runs and still should not be adopted**, which is
+exactly why the instruction below to read the replies rather than the score is not a
+formality. All four of its wins on `weather` and `gold` open "Here are a few things to know:
+1. Gold Price Today | Gold Spot Price Charts | APMEX...". It is reciting the search results
+back. The scorer asks for a shared figure and no refusal phrase, and recitation satisfies
+both without answering anything. Its `time` reply — "The time today is 17:27:41 UTC" —
+relabels JST as UTC, the same defect as last time, and scores correct.
 
 **The gold refusal reproduced this time, and it took every arm with it: 0/16.** The
 2026-08-09 run recorded it as not reproducing and concluded the refusal was an intermittent
@@ -29,11 +40,9 @@ posture landing on different cases run to run. That reading survives, but the ca
 clearly not neutral: with `$4,377.00` sitting in the evidence, `1.2B/tool` refused on all
 four samples, `assistant` and `prefill` hedged into "the current gold price varies by ounce
 weight", and one `prefill` sample invented "$1400". A fabricated figure with the true one
-in context is the grounding bug at full strength, and it is now the case to develop against.
-
-`1.2B/tool`'s refusals went 2/20 to 5/20 across the two runs with no change to the frame,
-which is the same variance app/persona.py records for this tier — treat any single-run
-refusal count here as an estimate with a wide interval.
+in context is the grounding bug at full strength, and it is now the case to develop against
+— it is in evals/cases.yaml as `gold-price-refusal`, where it fails 6/6 through the live
+router as well, so it is a property of the system and not of this bench.
 
 `read` is sampled at 0.6 rather than run greedily because the defect under test is a
 refusal that appears on some samples and not others; at temperature 0 it either always
@@ -227,10 +236,19 @@ CAPTURE: list[tuple[str, str, str, dict]] = [
     ("disk", "how much disk space do I have", "system_status", {}),
 ]
 
+# **The apostrophe is a character class because these models type a curly one.** Found
+# 2026-08-15 while hunting a refusal case through the live router: six replies to the
+# Spider-Man question all opened "I don't have access to live financial data" and only two
+# were counted, because the other four used U+2019 and `n'?t` matches U+0027 alone. Every
+# refusal count taken before this was an undercount. Same lesson as `figures()` below and
+# for the third time in this file: the scorer was tuned against text written the way it was
+# expected to be written.
+_APOS = "['’]"
+
 _REFUSAL = re.compile(
-    r"(?:do(?:n'?t| not) have (?:access|real[- ]time|current|up[- ]to[- ]date)"
-    r"|(?:can'?t|cannot|unable to) (?:provide|access|give|retrieve|browse|check)"
-    r"|no access to|not able to access|I'?m an AI|as an AI"
+    rf"(?:do(?:n{_APOS}?t| not) have (?:access|real[- ]time|current|up[- ]to[- ]date)"
+    rf"|(?:can{_APOS}?t|cannot|unable to) (?:provide|access|give|retrieve|browse|check)"
+    rf"|no access to|not able to access|I{_APOS}?m an AI|as an AI"
     r"|real[- ]time (?:data|information|access)"
     r"|check a (?:reliable|live|financial) (?:source|website)"
     r"|recommend (?:checking|visiting))",
