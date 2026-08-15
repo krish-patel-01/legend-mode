@@ -271,3 +271,101 @@ def test_system_status_reports_disk_and_cores() -> None:
     out = basics.system_status()
     assert "GB free" in out
     assert "cores" in out
+
+
+# --- the schema is a contract, in both directions ------------------------------
+#
+# A tool's `parameters` is the only thing the dispatcher sees, and its `run` is what
+# actually executes. Nothing has ever checked that those two agree, and drift between them
+# fails quietly in a way that looks like a bad model rather than a bad schema:
+#
+#   a property with no matching parameter   the model fills a field that is discarded, or
+#                                           invoke() raises TypeError and the model is told
+#                                           it passed bad arguments when it did as asked
+#   a required parameter not in the schema  the model cannot know to supply it, so the call
+#                                           fails every time however well it reasons
+#   a developer-controlled field advertised the model spends schema breadth on something it
+#                                           should never set — and breadth is expensive
+#                                           here, see the note in app/tools/notes.py
+#
+# The audit that added these found nothing wrong, which is the outcome to want. They exist
+# so it stays that way: `config` is closed over in each `tools()` factory and the request
+# text arrives through `wants_request`, and both of those are conventions rather than
+# anything enforced.
+
+FRAMEWORK_SUPPLIED = {"request"}
+"""Filled in by `ToolRegistry.invoke`, never by the model, so never in the schema."""
+
+
+def _all_tools() -> list[Tool]:
+    from app.tools.registry import build_registry
+
+    return sorted(build_registry().for_families({"basics", "web", "notes"}),
+                  key=lambda t: t.name)
+
+
+def _signature(tool: Tool):
+    import inspect
+
+    parameters = inspect.signature(tool.run).parameters
+    named = {
+        name for name, p in parameters.items()
+        if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+    }
+    no_default = {
+        name for name, p in parameters.items()
+        if p.default is p.empty and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+    }
+    return named, no_default
+
+
+@pytest.mark.parametrize("tool", _all_tools(), ids=lambda t: t.name)
+def test_every_advertised_field_is_a_real_parameter(tool: Tool) -> None:
+    named, _ = _signature(tool)
+    advertised = set((tool.parameters.get("properties") or {}).keys())
+    assert advertised <= named, (
+        f"{tool.name} advertises {sorted(advertised - named)} to the model, which "
+        f"{tool.name}'s run() does not accept"
+    )
+
+
+@pytest.mark.parametrize("tool", _all_tools(), ids=lambda t: t.name)
+def test_every_parameter_the_model_must_supply_is_visible(tool: Tool) -> None:
+    _, no_default = _signature(tool)
+    advertised = set((tool.parameters.get("properties") or {}).keys())
+    hidden = no_default - advertised - FRAMEWORK_SUPPLIED
+    assert not hidden, (
+        f"{tool.name} needs {sorted(hidden)} and has no default for them, but they are "
+        f"not in the schema, so the model cannot know to send them"
+    )
+
+
+@pytest.mark.parametrize("tool", _all_tools(), ids=lambda t: t.name)
+def test_nothing_required_is_left_undeclared(tool: Tool) -> None:
+    advertised = set((tool.parameters.get("properties") or {}).keys())
+    required = set(tool.parameters.get("required") or [])
+    assert required <= advertised, (
+        f"{tool.name} marks {sorted(required - advertised)} required without describing it"
+    )
+
+
+@pytest.mark.parametrize("tool", _all_tools(), ids=lambda t: t.name)
+def test_framework_arguments_are_never_shown_to_the_model(tool: Tool) -> None:
+    """`request` is the user's own prose, decided by the registry. Advertising it would
+    invite the dispatcher to paraphrase the question into a field that is about to be
+    overwritten with the real thing."""
+    advertised = set((tool.parameters.get("properties") or {}).keys())
+    assert not (advertised & FRAMEWORK_SUPPLIED), (
+        f"{tool.name} advertises {sorted(advertised & FRAMEWORK_SUPPLIED)}, which the "
+        f"registry supplies"
+    )
+
+
+@pytest.mark.parametrize("tool", _all_tools(), ids=lambda t: t.name)
+def test_wants_request_implies_run_accepts_it(tool: Tool) -> None:
+    """The flag and the signature are set in different places and neither checks the
+    other; mismatched, `invoke` raises TypeError and reports it to the model as bad
+    arguments — a failure that reads as the dispatcher's fault."""
+    named, _ = _signature(tool)
+    if tool.wants_request:
+        assert "request" in named, f"{tool.name} sets wants_request but run() takes no request="
