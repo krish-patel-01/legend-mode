@@ -327,3 +327,38 @@ async def test_a_search_with_no_direct_answer_is_unchanged(monkeypatch) -> None:
 async def test_a_genuinely_empty_response_still_says_so(monkeypatch) -> None:
     _stub_searxng(monkeypatch, {"results": [], "answers": [], "infoboxes": []})
     assert "No results for 'nothing at all'" in await web.search("nothing at all")
+
+
+# --- the query is sent unscoped, and that is a measured decision --------------------
+
+
+async def test_the_search_request_is_deliberately_unscoped(monkeypatch) -> None:
+    """`engines`, `categories` and `time_range` were probed and none of them shipped.
+
+    This pins the outgoing parameters so the rejection is enforced rather than merely
+    written down. The measurement is in `app/tools/web.py` next to the request; the short
+    version is that `time_range` returned zero results on 10 of 10 recency queries,
+    category scoping traded one failure mode for another, and engine pinning bought
+    nothing. If a later change adds a parameter here, this test is the prompt to go and
+    read why the last attempt did not.
+    """
+    import httpx
+
+    seen: dict[str, str] = {}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        seen.update(request.url.params)
+        return httpx.Response(200, json={"results": [], "answers": [], "infoboxes": []})
+
+    transport = httpx.MockTransport(_handler)
+    original = httpx.AsyncClient
+
+    def _client(*args, **kwargs):
+        kwargs["transport"] = transport
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _client)
+
+    await web.search("who won the last f1 race")
+
+    assert seen == {"q": "who won the last f1 race", "format": "json", "safesearch": "0"}
