@@ -124,6 +124,28 @@ _FULL_NAMED_STYLE = (
 # A fair re-test would need a case that fails today because the model does not believe it
 # can look something up. Until that exists this is a cost with no measured benefit.
 #
+# **2026-08-15: that case now exists, and the clause has a measured benefit for the first
+# time.** `gold-price-refusal` in evals/cases.yaml — "what is the current gold price?",
+# where `web_search` runs, returns the price, and the reply refuses anyway. Arms alternated
+# on/off/on/off with the server restarted between each and the listening PID checked every
+# time, because a kill that silently fails is how this project once produced a page of
+# meaningless passes:
+#
+#     capabilities   run 1   run 2   total
+#     off             0/4     0/6     0/10
+#     on              2/4     1/6     3/10
+#
+# 0/10 is a floor the off arm never once cleared, across two separate server processes. But
+# 3/10 against 0/10 is ten observations per arm, and everything measured today says this
+# rig's run-to-run variance is wider than that — scripts/tool_bench.py moved an arm four
+# points on an identical fixture an hour apart.
+#
+# **So the default does not change on this evidence.** The 2026-08-10 cost above is real
+# and was measured over the whole suite; this benefit is one case. What has changed is that
+# the two are now comparable at all, which they were not before. The decision needs a full
+# suite run in both arms — the question is whether ~3/10 on refusals is worth
+# denies-being-chatgpt going 100% to 50%, and that is a trade to see whole, not to infer.
+#
 # The wording is kept because it is the thing that was measured, and because the shape is
 # right even if the result was not: capabilities as a fact about itself, no verbs the
 # model could imitate, and no promise that a lookup has happened — the clause has to
