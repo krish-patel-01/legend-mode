@@ -151,6 +151,46 @@ models:
     top_k: 40
     repeat_penalty: 1.1
 
+  # --- A 4B was tried as a replacement for the chat tier, and rejected. ---------
+  #
+  # Measured 2026-08-14 against Qwen3.5-4B at two quant levels, both registered
+  # temporarily and pinned with `scripts/eval.py --model` so all three answered identical
+  # cases with routing held constant. 19 cases (computable, dispute, factual), 2 samples.
+  #
+  #                    instruct-q3   qwen4b-q3   qwen4b-q2
+  #   on disk               600 MB      2.4 GB      1.9 GB
+  #   computable               94%        100%        100%
+  #   dispute                  12%         12%         12%
+  #   factual                 100%        100%         50%
+  #   OVERALL                  61%         63%         58%
+  #   latency median          3.4 s      19.3 s      21.1 s
+  #   latency p90             7.9 s      91.8 s      77.5 s
+  #   latency max            17.7 s     411.0 s     293.6 s
+  #   grounding fixes      2 (12%)           0           0
+  #
+  # **+2 points for 5.8x the median latency, and a p90 of 92 s against 7.9 s.** Q2 is
+  # strictly worse than the 1.2B on accuracy *and* slower, so it has no argument at all;
+  # it was also no faster than Q3 warm (5.9 s vs 5.2 s per 12 tokens), because cheaper
+  # weights are offset by costlier dequantisation on CPU. Both weights were deleted.
+  #
+  # **The useful result is `dispute`: 12% for all three.** That is the "push back on a
+  # false premise rather than invent" category, and the weakness behind the open web
+  # grounding problem. Four times the parameters moved it by nothing. It is a routing and
+  # prompting problem, not a parameter-count one — so do not reach for a bigger model
+  # next time without a reason more specific than size.
+  #
+  # The 4B's genuine wins were real and small: computable 94% -> 100%, and 0 arithmetic
+  # corrections against the 1.2B's 2.
+  #
+  # Gemma-4-E4B was rejected before download. "E4B" is *effective* parameters — the
+  # weights read per token are the full ~8B — so its smallest published quant (QAT
+  # UD-Q2_K_XL, 3.22 GB) is 1.7x Qwen's 1.94 GB, and CPU decode here is bandwidth bound.
+  # It would have paid double Qwen's latency, and Qwen's was already too slow.
+  #
+  # To redo any of this: `hf download unsloth/Qwen3.5-4B-GGUF <file>` needs
+  # HF_HUB_DISABLE_XET=1 on this machine — the Xet backend stalled at 11 MB with the
+  # process alive and zero throughput, and left no error anywhere.
+
   # --- Parked. Weights stay on disk (and `legend/small` is still tagged in Ollama),
   # so uncommenting an entry and re-running scripts/import_models.py brings it back.
   # Anything restored here also needs its route re-added to routes.yaml, which no

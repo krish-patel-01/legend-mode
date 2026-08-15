@@ -40,6 +40,14 @@ MAX_PAGE_BYTES = 2_000_000
 `MAX_RESULT_CHARS` will discard almost all of it anyway; the cap is about not spending the
 user's request downloading something huge."""
 
+MAX_SUMMARY_CHARS = 600
+"""How much of an infobox to keep, against 300 for a result snippet.
+
+Twice the budget because it is worth more: a snippet is whatever text happened to sit near
+the match on a page, while an infobox is an encyclopaedia's own opening description of the
+thing that was asked about. 600 covers a full Wikipedia lead paragraph.
+"""
+
 
 class WebConfig:
     """Runtime knobs, kept out of `Settings` so this module stays importable alone."""
@@ -114,8 +122,83 @@ def _check_address(url: str, *, allow_private: bool) -> str | None:
     return None
 
 
+def _summarise(payload: dict) -> str | None:
+    """The direct answer SearXNG found, if it found one, as a labelled block.
+
+    **Why this exists.** `results` is a ranked list of *pages*, and for a question whose
+    answer is a fact rather than a document the top of that list is often navigation:
+    "last f1 race" returns formula1.com and an ESPN calendar page, neither of which
+    contains a result. Handed only that, a 1.2B writer invents something plausible instead
+    of saying the evidence does not answer the question — the failure this is aimed at.
+
+    SearXNG already carries the fact separately when it has one. `infoboxes` is the
+    encyclopaedia entry for the subject; `answers` is the instant-answer slot fed by
+    plugins. Both were being dropped on the floor here, and only `results` was read.
+
+    **Measured on this instance, 2026-08-14, SearXNG in `legend-searxng`:**
+
+    | query                | answers | infoboxes | results |
+    |----------------------|---------|-----------|---------|
+    | capital of Nigeria   | 0       | 1         | 36      |
+    | population of India  | 0       | 1         | 27      |
+    | mass of Earth        | 0       | 1         | 34      |
+    | last f1 race         | 0       | **0**     | 39      |
+
+    Two things follow, and the second is the awkward one.
+
+    `infoboxes` is real and worth reading: three of four factual queries carried a
+    Wikipedia lead paragraph that answers the question outright.
+
+    `answers` was empty on all eleven queries tried, including `1+1` and `user agent`,
+    whose plugins are `active: true` in the container's own defaults — and empty in the
+    HTML output too, so it is the plugins not firing rather than the JSON serialiser
+    dropping them. It is still read here: it is three lines, it is the documented field,
+    and NEO's wrapper preferred it for good reason. But it is covered by a synthetic
+    payload in the tests rather than by anything observed live, and nothing here should be
+    described as verified against a real answer until one is seen.
+
+    **This does not fix "last f1 race".** That query has no infobox and no answer, so it
+    still reaches the writer as navigational links, exactly as before. The grounding
+    problem is narrowed to the queries SearXNG has no direct answer for, not solved.
+    """
+    parts: list[str] = []
+
+    for answer in (payload.get("answers") or [])[:1]:
+        # Plugins hand back either a bare string or an object with the text under `answer`.
+        text = answer.get("answer") if isinstance(answer, dict) else answer
+        text = " ".join(str(text or "").split())
+        if text:
+            parts.append(f"Direct answer: {text[:MAX_SUMMARY_CHARS]}")
+
+    for box in (payload.get("infoboxes") or [])[:1]:
+        content = " ".join((box.get("content") or "").split())
+        if not content:
+            continue
+        # The subject's name lives under `infobox`; `title` is present but empty on the
+        # wikipedia engine, so reading `title` first would silently label everything "".
+        name = (box.get("infobox") or box.get("title") or "").strip()
+        source = (box.get("id") or box.get("url") or "").strip()
+        engine = (box.get("engine") or "reference").strip()
+
+        block = f"Summary of {name} (from {engine})" if name else f"Summary (from {engine})"
+        lines = [f"{block}: {content[:MAX_SUMMARY_CHARS]}"]
+        for attribute in (box.get("attributes") or [])[:5]:
+            label = " ".join(str(attribute.get("label") or "").split())
+            value = attribute.get("value")
+            if isinstance(value, list):  # some engines nest the value
+                value = ", ".join(str(v) for v in value)
+            value = " ".join(str(value or "").split())
+            if label and value:
+                lines.append(f"   {label}: {value[:120]}")
+        if source:
+            lines.append(f"   source: {source}")
+        parts.append("\n".join(lines))
+
+    return "\n\n".join(parts) if parts else None
+
+
 async def search(query: str, config: WebConfig | None = None) -> str:
-    """Web search via SearXNG. Returns a numbered list of title, URL and snippet."""
+    """Web search via SearXNG. Returns any direct answer found, then the ranked pages."""
     cfg = config or WebConfig()
     query = query.strip()
     if not query:
@@ -149,9 +232,12 @@ async def search(query: str, config: WebConfig | None = None) -> str:
     except ValueError:
         return "The search service returned something that was not JSON."
 
+    summary = _summarise(payload)
     results = payload.get("results") or []
     if not results:
-        return f"No results for {query!r}."
+        # A direct answer with no ranked pages behind it is still an answer. Returning
+        # "no results" here would have thrown away the better half of the response.
+        return summary or f"No results for {query!r}."
 
     lines = []
     for index, hit in enumerate(results[: cfg.max_results], start=1):
@@ -159,7 +245,13 @@ async def search(query: str, config: WebConfig | None = None) -> str:
         url = (hit.get("url") or "").strip()
         snippet = " ".join((hit.get("content") or "").split())
         lines.append(f"{index}. {title}\n   {url}\n   {snippet[:300]}")
-    return f"Search results for {query!r}:\n\n" + "\n\n".join(lines)
+
+    # Summary first: it is the part most likely to contain the answer, and on a small
+    # model position in the context is not neutral.
+    body = "\n\n".join(lines)
+    if summary:
+        return f"Search results for {query!r}:\n\n{summary}\n\n{body}"
+    return f"Search results for {query!r}:\n\n{body}"
 
 
 async def fetch(url: str, config: WebConfig | None = None) -> str:
