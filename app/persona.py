@@ -124,6 +124,28 @@ _FULL_NAMED_STYLE = (
 # A fair re-test would need a case that fails today because the model does not believe it
 # can look something up. Until that exists this is a cost with no measured benefit.
 #
+# **2026-08-15: that case now exists, and the clause has a measured benefit for the first
+# time.** `gold-price-refusal` in evals/cases.yaml — "what is the current gold price?",
+# where `web_search` runs, returns the price, and the reply refuses anyway. Arms alternated
+# on/off/on/off with the server restarted between each and the listening PID checked every
+# time, because a kill that silently fails is how this project once produced a page of
+# meaningless passes:
+#
+#     capabilities   run 1   run 2   total
+#     off             0/4     0/6     0/10
+#     on              2/4     1/6     3/10
+#
+# 0/10 is a floor the off arm never once cleared, across two separate server processes. But
+# 3/10 against 0/10 is ten observations per arm, and everything measured today says this
+# rig's run-to-run variance is wider than that — scripts/tool_bench.py moved an arm four
+# points on an identical fixture an hour apart.
+#
+# **So the default does not change on this evidence.** The 2026-08-10 cost above is real
+# and was measured over the whole suite; this benefit is one case. What has changed is that
+# the two are now comparable at all, which they were not before. The decision needs a full
+# suite run in both arms — the question is whether ~3/10 on refusals is worth
+# denies-being-chatgpt going 100% to 50%, and that is a trade to see whole, not to infer.
+#
 # The wording is kept because it is the thing that was measured, and because the shape is
 # right even if the result was not: capabilities as a fact about itself, no verbs the
 # model could imitate, and no promise that a lookup has happened — the clause has to
@@ -177,6 +199,60 @@ TOOL_RESULT_NOTE = (
     "Answer from it directly. Never say you lack access or real-time information when a "
     "tool has already returned the answer."
 )
+
+# **An abstain clause was measured 2026-08-15 and does not ship. This is the third time.**
+#
+# The note above is one-directional: every clause pushes the model to commit, and none
+# covers the case where the tool returned navigational links instead of the answer. That is
+# the open grounding bug — asked who won the last F1 race with only formula1.com in
+# context, this tier answered "Winner: Max Verstappen of Red Bull Racing" — so a clause
+# permitting "the results don't say" looked like the obvious fix.
+#
+# Two arms were added mid-note, keeping the measured final line last:
+#
+#   abstain  "If the result does not contain what was asked, say so plainly and do not
+#            fill the gap from memory."
+#   worded   "...say that the search did not turn it up and stop there, rather than
+#            answering from memory." — names the sentence, after `abstain` produced
+#            refusals instead of abstentions.
+#
+# 8 cases x 4 samples, arms rotated per sample. `rich` = the tool result contains the
+# answer (evals/tool_context.json), scored as scripts/tool_bench.py scores it. `thin` = it
+# does not (captured live), scored as not asserting a figure absent from the evidence.
+#
+#              run   rich ok   refused |  thin ok   invented   refused
+#   control     1      14/20      3    |   6/12        6          2
+#   control     2      14/20      1    |   9/12        3          2
+#   abstain     1      13/20      5    |  11/12        1          7
+#   abstain     2      15/20      3    |  10/12        2          4
+#   worded      2      13/20      5    |   9/12        3          6
+#
+# **The first run said this was a five-point win and the second says it is one point.**
+# Nothing changed between them; control's own thin score moved 6/12 to 9/12 on its own. At
+# 12 observations per arm the run-to-run variance is larger than the effect, so the benefit
+# is unproven, not proven small.
+#
+# The cost is not unproven. Refusals rise with clause strength in 4 of 4 comparisons —
+# both runs, both kinds of evidence, and `worded` pushing hardest refuses most. And the
+# refusals are the bad kind: "I don't have access to real-time data", with search results
+# sitting in the context, which is the exact sentence the final line above forbids and the
+# exact posture this note exists to break.
+#
+# The `worded` arm is the informative one. Told the sentence to produce, the model produced
+# it once in 36 samples and answered with a capability denial instead. So the mechanism is
+# not that the model lacks permission to abstain — it is that any invitation to decline
+# lands on the pretrained refusal, which is a stronger attractor than the wording offered.
+#
+# Same shape as the two failures already recorded in this file: `persona_capabilities`
+# above, and scripts/frames.py, where a frame that *forbade* declining moved the
+# non-commitment somewhere a scorer liked better rather than removing it. Pushing on the
+# commit/decline axis from either end moves the failure and does not fix it. The next
+# attempt at the grounding bug should change what reaches the model, not how it is told to
+# feel about it.
+#
+# A fair re-test needs far more than 12 observations per arm, and a scorer for invention
+# better than "a figure not in the evidence" — that one counts a fabricated release date
+# and a fabricated race winner the same, and misses an invented name entirely.
 
 # Appended when the sticky stage sees the user disputing the previous answer.
 #

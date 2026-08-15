@@ -1,20 +1,60 @@
 """Is FunctionGemma-270M a better dispatcher — or a better tool-result reader — than what we run?
 
-**Result, 2026-08-09: no to the first, interesting-but-no to the second. Nothing adopted.**
+**Verdict, unchanged: no to the first, interesting-but-no to the second. Nothing adopted.**
+
+**Numbers re-taken 2026-08-15 against freshly captured evidence and a corrected scorer.**
+They are not comparable to the 2026-08-09 run below — `figures()` was wrong in both
+directions then, and two of the five cases were unscorable. The `pick` rows are carried
+over unchanged; that job was a clean loss and nothing since has touched it.
+
+Two `read` runs are shown, an hour apart on the same frozen fixture, because the gap
+between them is the most useful thing here. Run B additionally fixes `_REFUSAL`, which
+could only ever move a score down.
 
     job   arm                 correct   decode   tok/q   refused
     pick  350M                  6/10      0.3s     21              greedy, 1 sample
     pick  functiongemma         0/10      0.4s     25
-    read  1.2B/tool            15/20      1.1s     42     2/20     t=0.6, 4 samples
-    read  1.2B/assistant       11/20      1.2s     45     0/20
-    read  1.2B/prefill          9/20      0.9s     32     0/20
-    read  functiongemma        12/20      1.2s     83     0/20
+    read  1.2B/tool          14 -> 12/20   1.4s     48   5 -> 6     t=0.6, 4 samples
+    read  1.2B/assistant     11 -> 15/20   1.3s     44   0 -> 0
+    read  1.2B/prefill       12 -> 12/20   0.9s     32   0 -> 0
+    read  functiongemma      16 -> 16/20   1.4s     90   0 -> 0
+
+**`1.2B/assistant` moved 11/20 to 15/20 with zero refusals in both runs**, so nothing in the
+scorer fix touched it. That is four points of run-to-run noise on a 20-observation arm, and
+it is larger than most of the gaps this table gets read for. Treat the three `1.2B/*` rows
+as indistinguishable at this sample size, and do not conclude anything from a single run —
+scripts/cot_bench.py and app/persona.py both now carry the same warning from separate
+measurements taken the same day.
+
+**FunctionGemma tops the table in both runs and still should not be adopted**, which is
+exactly why the instruction below to read the replies rather than the score is not a
+formality. All four of its wins on `weather` and `gold` open "Here are a few things to know:
+1. Gold Price Today | Gold Spot Price Charts | APMEX...". It is reciting the search results
+back. The scorer asks for a shared figure and no refusal phrase, and recitation satisfies
+both without answering anything. Its `time` reply — "The time today is 17:27:41 UTC" —
+relabels JST as UTC, the same defect as last time, and scores correct.
+
+**The gold refusal reproduced this time, and it took every arm with it: 0/16.** The
+2026-08-09 run recorded it as not reproducing and concluded the refusal was an intermittent
+posture landing on different cases run to run. That reading survives, but the case is
+clearly not neutral: with `$4,377.00` sitting in the evidence, `1.2B/tool` refused on all
+four samples, `assistant` and `prefill` hedged into "the current gold price varies by ounce
+weight", and one `prefill` sample invented "$1400". A fabricated figure with the true one
+in context is the grounding bug at full strength, and it is now the case to develop against
+— it is in evals/cases.yaml as `gold-price-refusal`, where it fails 6/6 through the live
+router as well, so it is a property of the system and not of this bench.
 
 `read` is sampled at 0.6 rather than run greedily because the defect under test is a
 refusal that appears on some samples and not others; at temperature 0 it either always
 fires or never does, which measures the wrong thing precisely. The three `1.2B/*` rows are
 the tool-result *framings* in scripts/frames.py — see that file for why the shipped one
 stays despite having the only refusals.
+
+---
+
+**The 2026-08-09 run, kept because its reasoning is still what settled the design.** Its
+`read` numbers were `1.2B/tool` 15/20, `assistant` 11/20, `prefill` 9/20, `functiongemma`
+12/20, at 2/20 refusals for the first and 0 for the rest.
 
 Read the `read` row with the replies, not off the score — the scorer is deliberately crude
 (a shared figure, no refusal phrase) and reciting the evidence passes it. What the models
@@ -196,10 +236,19 @@ CAPTURE: list[tuple[str, str, str, dict]] = [
     ("disk", "how much disk space do I have", "system_status", {}),
 ]
 
+# **The apostrophe is a character class because these models type a curly one.** Found
+# 2026-08-15 while hunting a refusal case through the live router: six replies to the
+# Spider-Man question all opened "I don't have access to live financial data" and only two
+# were counted, because the other four used U+2019 and `n'?t` matches U+0027 alone. Every
+# refusal count taken before this was an undercount. Same lesson as `figures()` below and
+# for the third time in this file: the scorer was tuned against text written the way it was
+# expected to be written.
+_APOS = "['’]"
+
 _REFUSAL = re.compile(
-    r"(?:do(?:n'?t| not) have (?:access|real[- ]time|current|up[- ]to[- ]date)"
-    r"|(?:can'?t|cannot|unable to) (?:provide|access|give|retrieve|browse|check)"
-    r"|no access to|not able to access|I'?m an AI|as an AI"
+    rf"(?:do(?:n{_APOS}?t| not) have (?:access|real[- ]time|current|up[- ]to[- ]date)"
+    rf"|(?:can{_APOS}?t|cannot|unable to) (?:provide|access|give|retrieve|browse|check)"
+    rf"|no access to|not able to access|I{_APOS}?m an AI|as an AI"
     r"|real[- ]time (?:data|information|access)"
     r"|check a (?:reliable|live|financial) (?:source|website)"
     r"|recommend (?:checking|visiting))",
@@ -215,11 +264,45 @@ _REFUSAL = re.compile(
 # the old bar, so a correct, grounded, well-phrased reply counted as a miss for every arm
 # on that case. Same failure as the `not_number` artifact in evals/cases.yaml: a scorer
 # tuned against the answers it expected to see rather than the ones it got.
-_FIGURE = re.compile(r"\d[\d,]{2,}(?:\.\d+)?|\d+\.\d+")
+#
+# **And it happened twice more, in both directions at once. Fixed 2026-08-15.** Checking
+# what the frozen evidence actually offered a model to be graded against:
+#
+#   weather   2 figures, both URL fragments — 202438 and 4745796. The temperature is 86°,
+#             two digits, so it never cleared the bar. Every correct answer on this case
+#             scored ungrounded for every arm, which is the 653-million bug again.
+#   time      2 figures, 2026 and 0900 — the year and the UTC offset. The clock reading
+#             17:27:41 is not matched at all, so a reply naming the *wrong* time scored
+#             grounded for repeating the year.
+#
+# So one case could not be passed and another could not be failed. Three additions: clock
+# readings, degree-marked temperatures, and stripping URLs before extracting anything,
+# since a long digit run inside a link is an article id and never the answer.
+_URL = re.compile(r"https?://\S+")
+
+_FIGURE = re.compile(
+    r"\d{1,2}:\d{2}(?::\d{2})?"   # a clock reading
+    r"|\d{1,3}\s?°"               # a temperature
+    r"|\d[\d,]{2,}(?:\.\d+)?"     # three or more digits, grouped or not
+    r"|\d+\.\d+"                  # anything with a decimal point
+)
 
 
 def figures(text: str) -> set[str]:
-    return {m.replace(",", "") for m in _FIGURE.findall(text)}
+    """The numbers in `text` that could be somebody's answer.
+
+    Applied to the evidence and to the reply, so the URL stripping has to happen on both
+    or a model quoting a link would match figures the evidence no longer has.
+
+    Known residue, left alone deliberately: a correct 12-hour rendering of a 24-hour clock
+    ("5:27 PM" for 17:27:41) still scores ungrounded, because matching those means doing
+    timezone arithmetic in a scorer that exists to avoid judgement. The `time` case is
+    therefore still read off the replies rather than off its score.
+    """
+    text = _URL.sub(" ", text)
+    return {
+        m.replace(",", "").replace(" ", "").rstrip("°") for m in _FIGURE.findall(text)
+    }
 
 
 # --- one measured call ---------------------------------------------------------

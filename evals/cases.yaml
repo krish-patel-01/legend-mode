@@ -463,7 +463,39 @@ cases:
       recalled from training data fails here even when it reads plausibly.
     expect:
       tools: web_search
-      not_contains: ["I don't have access", "no real-time"]
+      # Apostrophe-free fragments on purpose. "I don't have access" was here with a
+      # straight quote and could never fire: this tier types a curly one, so the check
+      # silently passed on every refusal it was written to catch. See the same fix to
+      # `_REFUSAL` in scripts/tool_bench.py, where it was undercounting by half.
+      not_contains: ["have access", "no real-time", "real-time access"]
+
+  - id: gold-price-refusal
+    category: tools
+    samples: 4
+    prompt: "what is the current gold price?"
+    note: >
+      **Expected to fail. That is why it is here.** app/persona.py records that
+      `persona_capabilities` cannot be fairly re-tested without a case that fails because
+      the model does not believe it can look something up — until one existed, turning the
+      clause on had no headroom to show a gain in, and it stayed off with a measured cost
+      and no measured benefit.
+
+      This is that case, found rather than authored. Measured 2026-08-15 through the live
+      router at 6 samples: `web_search` ran 6/6 and the reply refused 6/6, with the price
+      in context — "I don't have real-time access to current gold prices", "I don't have a
+      live feed", "beyond my knowledge cutoff in October". One sample answered
+      "$4,400 to $4,500" when the evidence said $4,375.97, which is the worse half of the
+      same failure. scripts/tool_bench.py scores the identical evidence 0/16 across all
+      four framings, so this is a property of the system rather than of one harness.
+
+      Do not "fix" this by loosening the checks. It passes when the assistant states the
+      figure the search returned.
+    expect:
+      tools: web_search
+      not_contains: ["have access", "real-time access", "knowledge cutoff", "live feed"]
+      # A dollar amount of three digits or more. The price moves daily, so the case cannot
+      # assert the number itself — only that one was given rather than described.
+      regex: "\\$\\s?[\\d,]{3,}"
 
   # --- tools: the gate is the load-bearing part, so most of these assert it stays shut --
 

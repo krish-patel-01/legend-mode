@@ -253,6 +253,60 @@ outperforms an ungrounded 14B on factual questions.
 
 ---
 
+## The queue, in order
+
+What is actually next, sequenced deliberately. This section is the live work; the one below
+it is the parked work, and the two are adjacent so neither gets read as the other.
+
+The order is not preference. Items 1 and 2 are the same investigation approached from two
+ends, cheaper end first — better evidence before better prompting — so that whatever item 1
+still has to solve is measured rather than assumed. Item 3 must follow both, because it
+re-freezes the tool-result fixture and freezing it first would capture evidence the two
+changes above are about to invalidate.
+
+1. **Engine/category scoping for SearXNG.** `search()` sends only `q`, `format` and
+   `safesearch`; SearXNG also takes `engines` and `categories`. Whether scoping helps is a
+   hypothesis and not a known win — the general category already carries the wikipedia
+   infoboxes, so the plausible gain is `news` on recency questions rather than
+   encyclopaedic ones. Probe before changing anything, and if scoping does land it is
+   decided in code from the query text, never as a tool parameter: schema breadth
+   measurably degrades the dispatcher (see `app/tools/notes.py` and `app/tools/gate.py`).
+
+2. **The grounding problem.** `last f1 race` returns navigational pages and the writer
+   invents an answer rather than saying the evidence lacks one. `TOOL_RESULT_NOTE` in
+   `app/persona.py` is one-directional — every clause pushes the model to commit and none
+   covers the case where the results do not contain the answer. That is the next thing to
+   measure, in two arms, watching the `tools` category for the regression.
+
+3. **Stale measurements.** `evals/tool_context.json` needs re-freezing, and
+   `scripts/tool_bench.py`'s docstring claims **15/20** on the `read` job where the last
+   real evidence scored **7–8/20**. A benchmark that overstates its own result is precisely
+   what the conventions in this file exist to prevent.
+
+4. **A case that fails because the model does not believe it can look something up.**
+   Named as the blocker in `app/persona.py`: without one, `persona_capabilities` has no
+   headroom to prove itself in and stays off with no measured benefit. The case has to be
+   *found* by sampling, not authored — one invented to look like the bug would flatter the
+   clause for nothing.
+
+5. **Tool schema audit.** Nothing developer-controlled should appear in the LLM-visible
+   schema, and nothing in the schema should be invisible to the code. A first read says the
+   schemas are already clean, so the deliverable is the test that keeps them that way.
+
+**Dropped: the `files` tool family.** It was the only unbuilt one and it carried the real
+security surface, which is why it kept coming up. It is not wanted — recorded here so it is
+not proposed again.
+
+Two constraints that are decisions rather than findings, and so will not change by being
+re-measured:
+
+- **Wolfram Alpha is off the table.** Considered as a source of direct answers and declined.
+- **The Docker stack has never been run end-to-end.** `deploy/` is written and reviewed and
+  the SearXNG container is used daily, but `compose` as a whole has not been brought up.
+  Do not describe it as verified.
+
+---
+
 ## Deferred, with the reason
 
 **RL on model weights — not viable here.** [OpenEnv](https://github.com/meta-pytorch/OpenEnv)

@@ -157,6 +157,14 @@ def _summarise(payload: dict) -> str | None:
     payload in the tests rather than by anything observed live, and nothing here should be
     described as verified against a real answer until one is seen.
 
+    **Re-tested 2026-08-15 while probing scoping, and it is still empty.** One run did
+    return `answers: 1` for "mass of Earth" under `engines=google,duckduckgo,wikipedia` —
+    the only non-empty `answers` ever seen here — and it did not reproduce: 0 on all 36
+    subsequent observations, across 4 queries x 3 engine configurations x 3 repetitions,
+    `1+1` among them. So it is reachable in principle and unreliable in practice, which
+    changes nothing about the code and does mean a future single sighting should not be
+    read as the field having started working.
+
     **This does not fix "last f1 race".** That query has no infobox and no answer, so it
     still reaches the writer as navigational links, exactly as before. The grounding
     problem is narrowed to the queries SearXNG has no direct answer for, not solved.
@@ -206,6 +214,41 @@ async def search(query: str, config: WebConfig | None = None) -> str:
 
     try:
         async with httpx.AsyncClient(timeout=cfg.timeout) as client:
+            # **The parameters are minimal on purpose. Scoping was measured and rejected.**
+            #
+            # SearXNG also accepts `engines`, `categories` and `time_range`, and the
+            # obvious theory was that pointing a question at the right engines would turn
+            # navigational results into answers. Probed 2026-08-15 against this instance
+            # over 8 queries — 3 encyclopaedic, 5 recency — with the config order rotated
+            # per query:
+            #
+            #   config                        enc direct   rec direct   note
+            #   default                          3/3          0/5
+            #   categories=news                  0/3          0/5       loses every infobox
+            #   categories=general,news          3/3          0/5       wash; see below
+            #   engines=wikipedia,wikidata       3/3          0/5       0 result pages at all
+            #   engines=google,duckduckgo,...    3/3          0/5       fewer results, no gain
+            #   time_range=week / month          0/6         0/10       0 results, 10/10
+            #
+            # `time_range` is the one that looked most targeted and is the worst: it
+            # returned nothing at all for every recency query and stripped the infoboxes
+            # off the encyclopaedic ones. `categories=general,news` was the only candidate
+            # that survived, and at 3 repetitions it scored 9/9 and 14/15 against the
+            # default's 8/9 and 13/15 — inside the noise. Case by case it trades rather
+            # than wins: it found "Gold Prices Per Ounce, $4,377.00" where the default
+            # offered $1,300 from 2019, and it lost Ahmedabad's actual temperature to an
+            # air-quality page and the shipping iPhone to rumours about an unreleased one.
+            #
+            # Swapping one failure mode for another is not an improvement, and the rule
+            # needed to tell those cases apart — sports result versus product name — is
+            # exactly the kind of guard that is worse than no guard when it misreads the
+            # question.
+            #
+            # One measurement to re-take before trusting any of this: the unscoped results
+            # are not stable. The same gold query returned decade-old prices on one run and
+            # "1 hour ago" live pages on the next, so a top-5 quality comparison at low
+            # repetition is reading noise. Anything re-testing scoping needs more samples
+            # than this did.
             response = await client.get(
                 f"{cfg.searxng_url}/search",
                 params={"q": query, "format": "json", "safesearch": 0},
